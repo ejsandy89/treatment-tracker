@@ -183,6 +183,7 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const remoteFlags = useRef({});
   const refreshRef = useRef(() => {});
+  const suppressUntil = useRef(0);
 
   useEffect(() => {
     (async () => {
@@ -227,6 +228,7 @@ export default function App() {
 
     async function refresh() {
       if (cancelled) return;
+      if (Date.now() < suppressUntil.current) return; // a local save just happened — don't race it
       setSyncing(true);
       try {
         const [t, appts, c, e, p, co] = await Promise.all([
@@ -274,31 +276,37 @@ export default function App() {
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.treatments) { remoteFlags.current.treatments = false; return; }
+    suppressUntil.current = Date.now() + 4000;
     saveKey("treatments", treatments);
   }, [treatments, ready]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.appointments) { remoteFlags.current.appointments = false; return; }
+    suppressUntil.current = Date.now() + 4000;
     saveKey("appointments", appointments);
   }, [appointments, ready]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.categories) { remoteFlags.current.categories = false; return; }
+    suppressUntil.current = Date.now() + 4000;
     saveKey("test-categories", categories);
   }, [categories, ready]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.entries) { remoteFlags.current.entries = false; return; }
+    suppressUntil.current = Date.now() + 4000;
     saveKey("test-entries", entries);
   }, [entries, ready]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.patient) { remoteFlags.current.patient = false; return; }
+    suppressUntil.current = Date.now() + 4000;
     saveKey("patient-info", patient);
   }, [patient, ready]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.cardOrder) { remoteFlags.current.cardOrder = false; return; }
+    suppressUntil.current = Date.now() + 4000;
     saveKey("summary-card-order", cardOrder);
   }, [cardOrder, ready]);
 
@@ -350,7 +358,7 @@ export default function App() {
         {mainTab === "calendar" && <CalendarTab treatments={treatments} setTreatments={setTreatments} />}
         {mainTab === "appointments" && <AppointmentsTab appointments={appointments} setAppointments={setAppointments} />}
         {mainTab === "tests" && <TestsTab categories={categories} setCategories={setCategories} entries={entries} setEntries={setEntries} />}
-        {mainTab === "settings" && <SettingsTab patient={patient} setPatient={setPatient} exportBundle={exportBundle} onImportAll={importAllData} />}
+        {mainTab === "settings" && <SettingsTab patient={patient} setPatient={setPatient} exportBundle={exportBundle} onImportAll={importAllData} onBeforeImport={() => { suppressUntil.current = Date.now() + 4000; }} />}
       </div>
     </div>
   );
@@ -1449,7 +1457,7 @@ function EditAppointmentModal({ a, onClose, onSave, onDelete }) {
 }
 
 // ================= SETTINGS TAB =================
-function SettingsTab({ patient, setPatient, exportBundle, onImportAll }) {
+function SettingsTab({ patient, setPatient, exportBundle, onImportAll, onBeforeImport }) {
   const [form, setForm] = useState(patient);
   const [saved, setSaved] = useState(false);
   useEffect(() => setForm(patient), [patient]);
@@ -1483,12 +1491,12 @@ function SettingsTab({ patient, setPatient, exportBundle, onImportAll }) {
         </button>
       </div>
 
-      <BackupSection exportBundle={exportBundle} onImportAll={onImportAll} />
+      <BackupSection exportBundle={exportBundle} onImportAll={onImportAll} onBeforeImport={onBeforeImport} />
     </div>
   );
 }
 
-function BackupSection({ exportBundle, onImportAll }) {
+function BackupSection({ exportBundle, onImportAll, onBeforeImport }) {
   const [exportPass, setExportPass] = useState("");
   const [exportBusy, setExportBusy] = useState(false);
   const [exportMsg, setExportMsg] = useState("");
@@ -1535,6 +1543,7 @@ function BackupSection({ exportBundle, onImportAll }) {
         "This will replace all data currently in this app (treatments, appointments, test results, patient details) with the contents of the backup file. This can't be undone. Continue?"
       );
       if (!ok) { setImportBusy(false); return; }
+      if (onBeforeImport) onBeforeImport();
       onImportAll(bundle);
       setImportMsg(`Import complete — data from ${envelope.exportedAt ? fmtDate(envelope.exportedAt.slice(0, 10)) : "the backup"} has been loaded.`);
       setImportFile(null);
