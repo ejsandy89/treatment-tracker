@@ -180,9 +180,30 @@ export default function App() {
   const [cardOrder, setCardOrder] = useState(DEFAULT_CARD_ORDER);
 
   const [lastSynced, setLastSynced] = useState(null);
+  const [syncError, setSyncError] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const remoteFlags = useRef({});
   const refreshRef = useRef(() => {});
+
+  async function forceSaveAll() {
+    setSyncing(true);
+    suppressUntil.current = Date.now() + 4000;
+    try {
+      const results = await Promise.all([
+        saveKey("treatments", treatments),
+        saveKey("appointments", appointments),
+        saveKey("test-categories", categories),
+        saveKey("test-entries", entries),
+        saveKey("patient-info", patient),
+        saveKey("summary-card-order", cardOrder),
+      ]);
+      const allOk = results.every(Boolean);
+      setSyncError(!allOk);
+      if (allOk) setLastSynced(new Date());
+    } finally {
+      setSyncing(false);
+    }
+  }
   const suppressUntil = useRef(0);
 
   useEffect(() => {
@@ -277,37 +298,37 @@ export default function App() {
     if (!ready) return;
     if (remoteFlags.current.treatments) { remoteFlags.current.treatments = false; return; }
     suppressUntil.current = Date.now() + 4000;
-    saveKey("treatments", treatments);
+    saveKey("treatments", treatments).then(ok => setSyncError(!ok));
   }, [treatments, ready]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.appointments) { remoteFlags.current.appointments = false; return; }
     suppressUntil.current = Date.now() + 4000;
-    saveKey("appointments", appointments);
+    saveKey("appointments", appointments).then(ok => setSyncError(!ok));
   }, [appointments, ready]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.categories) { remoteFlags.current.categories = false; return; }
     suppressUntil.current = Date.now() + 4000;
-    saveKey("test-categories", categories);
+    saveKey("test-categories", categories).then(ok => setSyncError(!ok));
   }, [categories, ready]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.entries) { remoteFlags.current.entries = false; return; }
     suppressUntil.current = Date.now() + 4000;
-    saveKey("test-entries", entries);
+    saveKey("test-entries", entries).then(ok => setSyncError(!ok));
   }, [entries, ready]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.patient) { remoteFlags.current.patient = false; return; }
     suppressUntil.current = Date.now() + 4000;
-    saveKey("patient-info", patient);
+    saveKey("patient-info", patient).then(ok => setSyncError(!ok));
   }, [patient, ready]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.cardOrder) { remoteFlags.current.cardOrder = false; return; }
     suppressUntil.current = Date.now() + 4000;
-    saveKey("summary-card-order", cardOrder);
+    saveKey("summary-card-order", cardOrder).then(ok => setSyncError(!ok));
   }, [cardOrder, ready]);
 
   if (!ready) {
@@ -341,7 +362,8 @@ export default function App() {
 
       <Header
         mainTab={mainTab} setMainTab={setMainTab} treatments={treatments} possessive={possessive}
-        lastSynced={lastSynced} syncing={syncing} onRefresh={() => refreshRef.current()}
+        lastSynced={lastSynced} syncing={syncing} syncError={syncError}
+        onRefresh={() => (syncError ? forceSaveAll() : refreshRef.current())}
       />
 
       <div className="tt-content">
@@ -365,7 +387,7 @@ export default function App() {
 }
 
 // ================= HEADER =================
-function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, syncing, onRefresh }) {
+function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, syncing, onRefresh, syncError }) {
   const next = useMemo(() => {
     const today = todayStr();
     return treatments
@@ -388,11 +410,13 @@ function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, synci
     settings: "Patient details and app preferences",
   };
 
-  const syncLabel = syncing
-    ? "Syncing…"
-    : lastSynced
-      ? `Synced ${lastSynced.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-      : "";
+  const syncLabel = syncError
+    ? "Couldn't save — tap to retry"
+    : syncing
+      ? "Syncing…"
+      : lastSynced
+        ? `Synced ${lastSynced.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+        : "";
 
   return (
     <div className="tt-header" style={{ background: T.navy, borderBottom: `3px solid ${T.accentBright}`, color: "#fff" }}>
@@ -414,9 +438,10 @@ function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, synci
           <button
             className="tt-btn" onClick={onRefresh} title="Check for updates now"
             style={{
-              display: "flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,.18)", borderRadius: 10, padding: "8px 12px",
-              fontSize: 11.5, color: "rgba(255,255,255,.85)",
+              display: "flex", alignItems: "center", gap: 6,
+              background: syncError ? "rgba(200,16,46,0.25)" : "rgba(255,255,255,0.08)",
+              border: `1px solid ${syncError ? "#E68A9A" : "rgba(255,255,255,.18)"}`, borderRadius: 10, padding: "8px 12px",
+              fontSize: 11.5, color: syncError ? "#FBE4E7" : "rgba(255,255,255,.85)", fontWeight: syncError ? 700 : 400,
             }}
           >
             <RefreshCw size={13} className={syncing ? "tt-spin" : ""} />
