@@ -1,0 +1,19 @@
+# OPTIONAL — free-tier password protection.
+#
+# Netlify's one-click password screen needs a Pro plan. On the Free plan you
+# can still gate the whole site with HTTP Basic Auth by renaming this file to
+# "_headers" (no extension) and setting your own username/password below.
+# Do this BEFORE sharing the link with anyone.
+#
+# /*
+#   Basic-Auth: yourusername:areasonablystrongpassword
+#
+# You can list more than one username:password pair to give different people
+# their own login (and revoke one later without changing everyone else's):
+#
+# /*
+#   Basic-Auth: kate:choose-a-password
+#   Basic-Auth: ed:choose-a-different-password
+#
+# Note: this file must live in the publish folder Vite builds to (the
+# "public" folder here — Vite copies its contents into "dist" untouched).
