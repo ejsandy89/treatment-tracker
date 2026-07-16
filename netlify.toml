@@ -1,0 +1,23 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+# The "blob" function is required now — it's what makes data live and shared
+# across everyone who opens this site (Netlify Blobs behind the scenes).
+# "summarise" is still optional: it powers real AI note summaries if you set
+# an ANTHROPIC_API_KEY. Without it, the app falls back to a simple built-in
+# summary automatically.
+#
+# Both functions need a CLI or Git-connected deploy to actually run — plain
+# drag-and-drop of the "dist" folder will NOT deploy them, and the app won't
+# save/sync data in that case. See the README.
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
