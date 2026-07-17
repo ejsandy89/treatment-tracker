@@ -6,7 +6,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Trash2, FlaskConical, CalendarDays,
   Clock3, RotateCcw, TrendingUp, Settings as SettingsIcon, List, Grid3x3, User,
   LayoutDashboard, CalendarCheck2, CalendarClock, Layers, GripVertical,
-  Stethoscope, NotebookText, RefreshCw,
+  Stethoscope, NotebookText, RefreshCw, Heart, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { loadKey, saveKey } from "./lib/storage.js";
 import { encryptPayload, decryptPayload } from "./lib/crypto.js";
@@ -48,7 +48,20 @@ const ROLE_STYLES = {
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const LINE_COLORS = [T.accent, T.info, T.warn, T.breach, T.navy, T.accentDeep, "#7A4E08"];
-const DEFAULT_CARD_ORDER = ["next", "nextAppointment", "completed", "remaining", "phaseEnd", "nextType"];
+const DEFAULT_CARD_ORDER = ["next", "nextAppointment", "completed", "remaining", "phaseEnd", "nextType", "supportMessages"];
+const DEFAULT_TAB_ORDER = ["summary", "calendar", "appointments", "support", "tests", "settings"];
+const SUPPORT_QUOTES = [
+  "You've got this!",
+  "You are strong.",
+  "Don't give up!",
+  "You are loved.",
+  "Keep smashing it!",
+  "One day at a time.",
+  "You're doing amazing.",
+  "Sending you strength today.",
+  "Believe in yourself.",
+  "Every day is progress.",
+];
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -73,6 +86,32 @@ function heuristicBullets(text) {
     .map(s => s.trim())
     .filter(Boolean)
     .slice(0, 6);
+}
+
+function heuristicProseSummary(text) {
+  const trimmed = text.trim();
+  if (trimmed.length <= 160) return trimmed;
+  const cut = trimmed.slice(0, 160);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${cut.slice(0, lastSpace > 80 ? lastSpace : 160).trim()}…`;
+}
+
+async function summariseSupportMessage(text) {
+  if (!text || !text.trim()) return "";
+  if (text.trim().length <= 160) return text.trim(); // already short — no need to summarise
+  try {
+    const res = await fetch("/.netlify/functions/summarise", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes: text, mode: "prose" }),
+    });
+    if (!res.ok) throw new Error(`summarise failed: ${res.status}`);
+    const data = await res.json();
+    if (typeof data.summary === "string" && data.summary.trim()) return data.summary.trim();
+    return heuristicProseSummary(text);
+  } catch {
+    return heuristicProseSummary(text);
+  }
 }
 
 async function summariseNotes(text) {
@@ -171,6 +210,8 @@ const GLOBAL_CSS = `
 export default function App() {
   const [ready, setReady] = useState(false);
   const [mainTab, setMainTab] = useState("summary");
+  const [calendarView, setCalendarView] = useState("summary");
+  const [appointmentsView, setAppointmentsView] = useState("summary");
 
   const [treatments, setTreatments] = useState([]);
   const [appointments, setAppointments] = useState([]);
@@ -178,12 +219,26 @@ export default function App() {
   const [entries, setEntries] = useState({ Bloods: [], Measurements: [] });
   const [patient, setPatient] = useState(DEFAULT_PATIENT);
   const [cardOrder, setCardOrder] = useState(DEFAULT_CARD_ORDER);
+  const [supportMessages, setSupportMessages] = useState([]);
+  const [tabOrder, setTabOrder] = useState(DEFAULT_TAB_ORDER);
+
+  const [supportMessage] = useState(() => SUPPORT_QUOTES[Math.floor(Math.random() * SUPPORT_QUOTES.length)]);
+  const [splashDone, setSplashDone] = useState(false);
+  const [featuredMsg, setFeaturedMsg] = useState(null);
+  const [featuredSummary, setFeaturedSummary] = useState("");
+  const featuredPickedRef = useRef(false);
 
   const [lastSynced, setLastSynced] = useState(null);
   const [syncError, setSyncError] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const remoteFlags = useRef({});
   const refreshRef = useRef(() => {});
+
+  function goTo(tab, view) {
+    setMainTab(tab);
+    if (tab === "calendar" && view) setCalendarView(view);
+    if (tab === "appointments" && view) setAppointmentsView(view);
+  }
 
   async function forceSaveAll() {
     setSyncing(true);
@@ -196,6 +251,8 @@ export default function App() {
         saveKey("test-entries", entries),
         saveKey("patient-info", patient),
         saveKey("summary-card-order", cardOrder),
+        saveKey("support-messages", supportMessages),
+        saveKey("tab-order", tabOrder),
       ]);
       const allOk = results.every(Boolean);
       setSyncError(!allOk);
@@ -208,13 +265,15 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const [t, appts, c, e, p, co] = await Promise.all([
+      const [t, appts, c, e, p, co, sm, to] = await Promise.all([
         loadKey("treatments", []),
         loadKey("appointments", []),
         loadKey("test-categories", ["Bloods", "Measurements"]),
         loadKey("test-entries", { Bloods: [], Measurements: [] }),
         loadKey("patient-info", DEFAULT_PATIENT),
         loadKey("summary-card-order", DEFAULT_CARD_ORDER),
+        loadKey("support-messages", []),
+        loadKey("tab-order", DEFAULT_TAB_ORDER),
       ]);
       let loadedCats = c;
       let loadedEntries = e;
@@ -225,8 +284,19 @@ export default function App() {
       }
       setTreatments(t); setAppointments(appts); setCategories(loadedCats); setEntries(loadedEntries); setPatient(p);
       setCardOrder(co && co.length === DEFAULT_CARD_ORDER.length ? co : DEFAULT_CARD_ORDER);
+      setSupportMessages(sm);
+      setTabOrder(to && to.length === DEFAULT_TAB_ORDER.length ? to : DEFAULT_TAB_ORDER);
       setLastSynced(new Date());
       setReady(true);
+
+      // Pick one message of support to feature for this session — stays the
+      // same for the whole visit, and will be a different one next time.
+      if (!featuredPickedRef.current && sm && sm.length > 0) {
+        featuredPickedRef.current = true;
+        const chosen = sm[Math.floor(Math.random() * sm.length)];
+        setFeaturedMsg(chosen);
+        summariseSupportMessage(chosen.message).then(setFeaturedSummary);
+      }
     })();
   }, []);
 
@@ -252,13 +322,15 @@ export default function App() {
       if (Date.now() < suppressUntil.current) return; // a local save just happened — don't race it
       setSyncing(true);
       try {
-        const [t, appts, c, e, p, co] = await Promise.all([
+        const [t, appts, c, e, p, co, sm, to] = await Promise.all([
           loadKey("treatments", []),
           loadKey("appointments", []),
           loadKey("test-categories", ["Bloods", "Measurements"]),
           loadKey("test-entries", { Bloods: [], Measurements: [] }),
           loadKey("patient-info", DEFAULT_PATIENT),
           loadKey("summary-card-order", DEFAULT_CARD_ORDER),
+          loadKey("support-messages", []),
+          loadKey("tab-order", DEFAULT_TAB_ORDER),
         ]);
         if (cancelled) return;
         let loadedCats = c;
@@ -274,6 +346,8 @@ export default function App() {
         applyRemote(setEntries, "entries", loadedEntries);
         applyRemote(setPatient, "patient", p);
         applyRemote(setCardOrder, "cardOrder", co && co.length === DEFAULT_CARD_ORDER.length ? co : DEFAULT_CARD_ORDER);
+        applyRemote(setSupportMessages, "supportMessages", sm);
+        applyRemote(setTabOrder, "tabOrder", to && to.length === DEFAULT_TAB_ORDER.length ? to : DEFAULT_TAB_ORDER);
         setLastSynced(new Date());
       } finally {
         if (!cancelled) setSyncing(false);
@@ -330,6 +404,42 @@ export default function App() {
     suppressUntil.current = Date.now() + 4000;
     saveKey("summary-card-order", cardOrder).then(ok => setSyncError(!ok));
   }, [cardOrder, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    if (remoteFlags.current.supportMessages) { remoteFlags.current.supportMessages = false; return; }
+    suppressUntil.current = Date.now() + 4000;
+    saveKey("support-messages", supportMessages).then(ok => setSyncError(!ok));
+  }, [supportMessages, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    if (remoteFlags.current.tabOrder) { remoteFlags.current.tabOrder = false; return; }
+    suppressUntil.current = Date.now() + 4000;
+    saveKey("tab-order", tabOrder).then(ok => setSyncError(!ok));
+  }, [tabOrder, ready]);
+
+  if (!splashDone) {
+    return (
+      <div className="tt-app" style={{
+        fontFamily: T.ui, background: `linear-gradient(160deg, ${T.navy}, ${T.accentDeep})`, minHeight: 600,
+        borderRadius: 16, overflow: "hidden", border: `1px solid ${T.line}`, color: "#fff",
+      }}>
+        <style>{GLOBAL_CSS}</style>
+        <div className="tt-content" style={{
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          minHeight: 480, textAlign: "center", gap: 22,
+        }}>
+          <Heart size={44} fill={T.accentBright} color={T.accentBright} />
+          <div style={{ fontSize: 27, fontWeight: 700, lineHeight: 1.35, maxWidth: 380 }}>{supportMessage}</div>
+          <button
+            className="tt-btn" onClick={() => setSplashDone(true)}
+            style={{ background: T.accentBright, color: T.navy, padding: "13px 32px", borderRadius: 10, fontWeight: 700, fontSize: 15 }}
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!ready) {
     return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 300, color: T.accent, fontFamily: T.ui }}>Loading…</div>;
@@ -341,7 +451,7 @@ export default function App() {
     && Object.values(entries).every(arr => (arr || []).length === 0) && !patient.name;
 
   const exportBundle = {
-    treatments, appointments, categories, entries, patient, cardOrder,
+    treatments, appointments, categories, entries, patient, cardOrder, supportMessages, tabOrder,
   };
 
   function importAllData(bundle) {
@@ -351,6 +461,8 @@ export default function App() {
     setEntries(bundle.entries && typeof bundle.entries === "object" ? bundle.entries : { Bloods: [], Measurements: [] });
     setPatient(bundle.patient && typeof bundle.patient === "object" ? { ...DEFAULT_PATIENT, ...bundle.patient } : DEFAULT_PATIENT);
     setCardOrder(Array.isArray(bundle.cardOrder) && bundle.cardOrder.length === DEFAULT_CARD_ORDER.length ? bundle.cardOrder : DEFAULT_CARD_ORDER);
+    setSupportMessages(Array.isArray(bundle.supportMessages) ? bundle.supportMessages : []);
+    setTabOrder(Array.isArray(bundle.tabOrder) && bundle.tabOrder.length === DEFAULT_TAB_ORDER.length ? bundle.tabOrder : DEFAULT_TAB_ORDER);
   }
 
   return (
@@ -364,6 +476,7 @@ export default function App() {
         mainTab={mainTab} setMainTab={setMainTab} treatments={treatments} possessive={possessive}
         lastSynced={lastSynced} syncing={syncing} syncError={syncError}
         onRefresh={() => (syncError ? forceSaveAll() : refreshRef.current())}
+        tabOrder={tabOrder} setTabOrder={setTabOrder}
       />
 
       <div className="tt-content">
@@ -376,9 +489,16 @@ export default function App() {
             opens this link will see it too, or you can restore a backup from <strong>Settings → Backup, export &amp; sharing</strong>.
           </div>
         )}
-        {mainTab === "summary" && <SummaryDashboardTab treatments={treatments} appointments={appointments} cardOrder={cardOrder} setCardOrder={setCardOrder} />}
-        {mainTab === "calendar" && <CalendarTab treatments={treatments} setTreatments={setTreatments} />}
-        {mainTab === "appointments" && <AppointmentsTab appointments={appointments} setAppointments={setAppointments} />}
+        {mainTab === "summary" && (
+          <SummaryDashboardTab
+            treatments={treatments} appointments={appointments} cardOrder={cardOrder} setCardOrder={setCardOrder}
+            supportMessage={supportMessage} onNavigate={goTo}
+            featuredMsg={featuredMsg} featuredSummary={featuredSummary}
+          />
+        )}
+        {mainTab === "calendar" && <CalendarTab treatments={treatments} setTreatments={setTreatments} view={calendarView} setView={setCalendarView} />}
+        {mainTab === "appointments" && <AppointmentsTab appointments={appointments} setAppointments={setAppointments} view={appointmentsView} setView={setAppointmentsView} />}
+        {mainTab === "support" && <SupportMessagesTab messages={supportMessages} setMessages={setSupportMessages} />}
         {mainTab === "tests" && <TestsTab categories={categories} setCategories={setCategories} entries={entries} setEntries={setEntries} />}
         {mainTab === "settings" && <SettingsTab patient={patient} setPatient={setPatient} exportBundle={exportBundle} onImportAll={importAllData} onBeforeImport={() => { suppressUntil.current = Date.now() + 4000; }} />}
       </div>
@@ -387,7 +507,16 @@ export default function App() {
 }
 
 // ================= HEADER =================
-function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, syncing, onRefresh, syncError }) {
+const TAB_META = {
+  summary: { icon: <LayoutDashboard size={15} />, label: "Summary" },
+  calendar: { icon: <CalendarDays size={15} />, label: "Treatment Calendar" },
+  appointments: { icon: <Stethoscope size={15} />, label: "Appointments" },
+  support: { icon: <Heart size={15} />, label: "Support Messages" },
+  tests: { icon: <FlaskConical size={15} />, label: "Test Results" },
+  settings: { icon: <SettingsIcon size={15} />, label: "Settings" },
+};
+
+function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, syncing, onRefresh, syncError, tabOrder, setTabOrder }) {
   const next = useMemo(() => {
     const today = todayStr();
     return treatments
@@ -399,6 +528,7 @@ function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, synci
     summary: possessive ? `${possessive} Summary` : "Summary",
     calendar: possessive ? `${possessive} Treatment Tracker` : "Treatment Tracker",
     appointments: possessive ? `${possessive} Appointments` : "Appointments",
+    support: "Support Messages",
     tests: possessive ? `${possessive} Test Results` : "Test Results",
     settings: "Settings",
   };
@@ -406,6 +536,7 @@ function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, synci
     summary: "Progress at a glance",
     calendar: "Care plan, appointments and rescheduling",
     appointments: "Consultant, registrar and surgical appointments",
+    support: "Messages of love and encouragement",
     tests: "Bloods, scans and results over time",
     settings: "Patient details and app preferences",
   };
@@ -450,11 +581,26 @@ function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, synci
         </div>
       </div>
       <div className="tt-header-tabs">
-        <TabButton active={mainTab === "summary"} onClick={() => setMainTab("summary")} icon={<LayoutDashboard size={15} />} label="Summary" />
-        <TabButton active={mainTab === "calendar"} onClick={() => setMainTab("calendar")} icon={<CalendarDays size={15} />} label="Treatment Calendar" />
-        <TabButton active={mainTab === "appointments"} onClick={() => setMainTab("appointments")} icon={<Stethoscope size={15} />} label="Appointments" />
-        <TabButton active={mainTab === "tests"} onClick={() => setMainTab("tests")} icon={<FlaskConical size={15} />} label="Test Results" />
-        <TabButton active={mainTab === "settings"} onClick={() => setMainTab("settings")} icon={<SettingsIcon size={15} />} label="Settings" />
+        {(tabOrder && tabOrder.length === Object.keys(TAB_META).length ? tabOrder : DEFAULT_TAB_ORDER).map(id => (
+          <DraggableTab
+            key={id}
+            id={id}
+            active={mainTab === id}
+            meta={TAB_META[id]}
+            onClick={() => setMainTab(id)}
+            onReorder={(fromId, toId) => {
+              setTabOrder(prev => {
+                const base = prev && prev.length === Object.keys(TAB_META).length ? prev : DEFAULT_TAB_ORDER;
+                const arr = [...base];
+                const from = arr.indexOf(fromId), to = arr.indexOf(toId);
+                if (from < 0 || to < 0) return arr;
+                arr.splice(from, 1);
+                arr.splice(to, 0, fromId);
+                return arr;
+              });
+            }}
+          />
+        ))}
       </div>
     </div>
   );
@@ -473,8 +619,30 @@ function TabButton({ active, onClick, icon, label }) {
   );
 }
 
+function DraggableTab({ id, active, meta, onClick, onReorder }) {
+  const [isOver, setIsOver] = useState(false);
+  if (!meta) return null;
+  return (
+    <div
+      draggable
+      onDragStart={(e) => e.dataTransfer.setData("text/plain", id)}
+      onDragOver={(e) => { e.preventDefault(); setIsOver(true); }}
+      onDragLeave={() => setIsOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsOver(false);
+        const fromId = e.dataTransfer.getData("text/plain");
+        if (fromId && fromId !== id) onReorder(fromId, id);
+      }}
+      style={{ borderRadius: "10px 10px 0 0", boxShadow: isOver ? `inset 0 -3px 0 ${T.accentBright}` : "none" }}
+    >
+      <TabButton active={active} onClick={onClick} icon={meta.icon} label={meta.label} />
+    </div>
+  );
+}
+
 // ================= SUMMARY DASHBOARD TAB =================
-function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder }) {
+function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder, supportMessage, onNavigate, featuredMsg, featuredSummary }) {
   const today = todayStr();
   const sorted = useMemo(() => [...treatments].sort((a, b) => a.date.localeCompare(b.date)), [treatments]);
 
@@ -535,6 +703,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
   const cardsMap = {
     next: {
       icon: <CalendarClock size={16} />, label: "Next treatment", accent: T.accent,
+      nav: () => onNavigate("calendar", "month"),
       content: nextTreatment ? (
         <>
           <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>{nextTreatment.type === "Other" ? nextTreatment.typeCustom : nextTreatment.type}</div>
@@ -549,6 +718,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
     },
     nextAppointment: {
       icon: <Stethoscope size={16} />, label: "Next appointment", accent: T.info,
+      nav: () => onNavigate("appointments", "month"),
       content: nextAppointment ? (
         <>
           <div style={{ fontSize: 15, fontWeight: 700, color: T.ink }}>{apptTitle(nextAppointment)}</div>
@@ -565,6 +735,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
     },
     completed: {
       icon: <CalendarCheck2 size={16} />, label: "Completed to date", accent: T.ok,
+      nav: () => onNavigate("calendar", "summary"),
       content: (
         <>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
@@ -582,6 +753,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
     },
     remaining: {
       icon: <Layers size={16} />, label: "Remaining by type", accent: T.info,
+      nav: () => onNavigate("calendar", "summary"),
       content: Object.keys(remainingByType).length === 0
         ? <div style={{ fontSize: 13, color: T.inkSoft }}>Nothing remaining</div>
         : (
@@ -602,6 +774,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
     },
     phaseEnd: {
       icon: <Clock3 size={16} />, label: phase ? `End of ${phase.currentType}` : "Current phase", accent: T.warn,
+      nav: () => onNavigate("calendar", "summary"),
       content: phase ? (
         <>
           <div style={{ fontSize: 26, fontWeight: 700, color: T.ink }}>{Math.max(daysBetween(today, phase.endDate), 0)}<span style={{ fontSize: 13, color: T.inkSoft, fontWeight: 600 }}> days</span></div>
@@ -611,12 +784,29 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
     },
     nextType: {
       icon: <TrendingUp size={16} />, label: "Next new treatment type", accent: T.navy,
+      nav: () => onNavigate("calendar", "summary"),
       content: phase && phase.nextType ? (
         <>
           <div style={{ fontSize: 26, fontWeight: 700, color: T.ink }}>{Math.max(daysBetween(today, phase.nextDate), 0)}<span style={{ fontSize: 13, color: T.inkSoft, fontWeight: 600 }}> days</span></div>
           <div style={{ fontSize: 12, color: T.inkSoft, marginTop: 6 }}>{phase.nextType} begins {fmtDate(phase.nextDate)}</div>
         </>
       ) : <div style={{ fontSize: 13, color: T.inkSoft }}>No further treatment type change scheduled</div>,
+    },
+    supportMessages: {
+      icon: <Heart size={16} />, label: "A message for you", accent: "#C9857E",
+      nav: () => onNavigate("support"),
+      fullWidth: true,
+      content: featuredMsg ? (
+        <>
+          <div style={{ fontSize: 16, fontWeight: 700, color: T.ink }}>{featuredMsg.name || "Someone"}</div>
+          <div style={{ fontSize: 14.5, color: T.ink, marginTop: 6, lineHeight: 1.55 }}>
+            {featuredSummary || featuredMsg.message}
+          </div>
+          <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 10 }}>Tap to see all messages →</div>
+        </>
+      ) : (
+        <div style={{ fontSize: 13, color: T.inkSoft }}>No messages yet — tap to add the first one.</div>
+      ),
     },
   };
 
@@ -641,8 +831,17 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
 
   return (
     <div>
+      {supportMessage && (
+        <div style={{
+          fontSize: 24, fontWeight: 800, color: T.navy, marginBottom: 18, lineHeight: 1.3,
+          display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <Heart size={22} fill="#C9857E" color="#C9857E" style={{ flexShrink: 0 }} />
+          {supportMessage}
+        </div>
+      )}
       <div style={{ fontSize: 11.5, color: T.inkSoft, marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
-        <GripVertical size={13} /> Drag a card to reorder
+        <GripVertical size={13} /> Drag a card to reorder, or tap one to jump to that section
       </div>
       <div className="tt-summary-grid">
         {orderIds.map(id => {
@@ -657,10 +856,12 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
               onDragOver={(e) => { e.preventDefault(); setOverId(id); }}
               onDragLeave={() => setOverId(prev => (prev === id ? null : prev))}
               onDrop={(e) => handleDrop(id, e)}
+              onClick={() => { if (cfg.nav) cfg.nav(); }}
               style={{
-                cursor: "grab", borderRadius: 12,
+                cursor: "pointer", borderRadius: 12,
                 outline: isOver ? `2px dashed ${T.accent}` : "none", outlineOffset: 2,
                 opacity: dragId === id ? 0.5 : 1,
+                gridColumn: cfg.fullWidth ? "1 / -1" : undefined,
               }}
             >
               <SummaryCard icon={cfg.icon} label={cfg.label} accent={cfg.accent}>{cfg.content}</SummaryCard>
@@ -692,8 +893,7 @@ function MiniStat({ label, value }) {
 }
 
 // ================= CALENDAR TAB =================
-function CalendarTab({ treatments, setTreatments }) {
-  const [view, setView] = useState("month");
+function CalendarTab({ treatments, setTreatments, view, setView }) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
   const [formOpen, setFormOpen] = useState(false);
   const [formDate, setFormDate] = useState(todayStr());
@@ -1217,8 +1417,7 @@ function buildChartData(catEntries) {
 }
 
 // ================= APPOINTMENTS TAB =================
-function AppointmentsTab({ appointments, setAppointments }) {
-  const [view, setView] = useState("month");
+function AppointmentsTab({ appointments, setAppointments, view, setView }) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
   const [formOpen, setFormOpen] = useState(false);
   const [formDate, setFormDate] = useState(todayStr());
@@ -1478,6 +1677,89 @@ function EditAppointmentModal({ a, onClose, onSave, onDelete }) {
         </button>
       </div>
     </ModalShell>
+  );
+}
+
+// ================= SUPPORT MESSAGES TAB =================
+function SupportMessagesTab({ messages, setMessages }) {
+  const [name, setName] = useState("");
+  const [date, setDate] = useState(todayStr());
+  const [text, setText] = useState("");
+  const [expandedId, setExpandedId] = useState(null);
+
+  function addMessage() {
+    if (!text.trim()) return;
+    setMessages(prev => [...prev, { id: uid(), name: name.trim(), date, message: text.trim() }]);
+    setText(""); setName(""); setDate(todayStr());
+  }
+  function deleteMessage(id) {
+    setMessages(prev => prev.filter(m => m.id !== id));
+    setExpandedId(prev => (prev === id ? null : prev));
+  }
+
+  const sorted = useMemo(() => [...messages].sort((a, b) => b.date.localeCompare(a.date)), [messages]);
+
+  return (
+    <div>
+      <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}>
+          <Heart size={15} fill="#C9857E" color="#C9857E" /> Add a message of support
+        </div>
+        <div className="tt-2col">
+          <Field label="From"><input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Grandma" style={inputStyle} /></Field>
+          <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} /></Field>
+        </div>
+        <Field label="Message"><textarea value={text} onChange={e => setText(e.target.value)} rows={3} placeholder="Write a message of support…" style={{ ...inputStyle, resize: "vertical" }} /></Field>
+        <button className="tt-btn" onClick={addMessage} style={{ background: T.accent, color: "#fff", borderRadius: 9, padding: "10px 18px", fontSize: 13, fontWeight: 600 }}>
+          Add message
+        </button>
+      </div>
+
+      {sorted.length === 0 ? (
+        <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>
+          No messages yet — the first one you add will show up here.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {sorted.map(m => {
+            const expanded = expandedId === m.id;
+            const summary = m.message.length > 70 ? `${m.message.slice(0, 70).trim()}…` : m.message;
+            return (
+              <div key={m.id} style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, overflow: "hidden" }}>
+                <div
+                  onClick={() => setExpandedId(prev => (prev === m.id ? null : m.id))}
+                  style={{ padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}
+                >
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start", minWidth: 0 }}>
+                    <Heart size={15} fill="#C9857E" color="#C9857E" style={{ marginTop: 2, flexShrink: 0 }} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12, color: T.inkSoft }}>
+                        <span style={{ fontFamily: T.mono }}>{fmtDate(m.date)}</span>
+                        {m.name && <> · <strong style={{ color: T.ink }}>{m.name}</strong></>}
+                      </div>
+                      {!expanded && (
+                        <div style={{ fontSize: 13.5, color: T.ink, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {summary}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {expanded ? <ChevronUp size={16} color={T.inkSoft} style={{ flexShrink: 0 }} /> : <ChevronDown size={16} color={T.inkSoft} style={{ flexShrink: 0 }} />}
+                </div>
+                {expanded && (
+                  <div style={{ padding: "0 14px 14px 39px" }}>
+                    <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{m.message}</div>
+                    <button className="tt-btn" onClick={() => deleteMessage(m.id)} style={{ marginTop: 10, background: "transparent", color: T.breach, fontSize: 11.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 5, padding: "4px 0" }}>
+                      <Trash2 size={12} /> Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
