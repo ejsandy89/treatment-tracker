@@ -149,6 +149,17 @@ const GLOBAL_CSS = `
   @keyframes tt-spin-kf { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
   .tt-app { width: 100%; box-sizing: border-box; }
+  .tt-splash {
+    min-height: 100dvh; width: 100%; box-sizing: border-box;
+    display: flex; flex-direction: column; border-radius: 0;
+  }
+  .tt-splash-inner {
+    flex: 1; width: 100%; box-sizing: border-box;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; gap: 22px;
+    padding: calc(24px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right))
+             calc(24px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));
+  }
   .tt-header {
     padding: calc(20px + env(safe-area-inset-top)) calc(28px + env(safe-area-inset-right)) 0 calc(28px + env(safe-area-inset-left));
   }
@@ -419,15 +430,12 @@ export default function App() {
 
   if (!splashDone) {
     return (
-      <div className="tt-app" style={{
-        fontFamily: T.ui, background: `linear-gradient(160deg, ${T.navy}, ${T.accentDeep})`, minHeight: 600,
-        borderRadius: 16, overflow: "hidden", border: `1px solid ${T.line}`, color: "#fff",
+      <div className="tt-app tt-splash" style={{
+        fontFamily: T.ui, background: `linear-gradient(160deg, ${T.navy}, ${T.accentDeep})`,
+        color: "#fff", overflow: "hidden", border: `1px solid ${T.line}`,
       }}>
         <style>{GLOBAL_CSS}</style>
-        <div className="tt-content" style={{
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          minHeight: 480, textAlign: "center", gap: 22,
-        }}>
+        <div className="tt-splash-inner">
           <Heart size={44} fill={T.accentBright} color={T.accentBright} />
           <div style={{ fontSize: 27, fontWeight: 700, lineHeight: 1.35, maxWidth: 380 }}>{supportMessage}</div>
           <button
