@@ -362,13 +362,25 @@ export default function App() {
     let cancelled = false;
     (async () => {
       setMembershipChecked(false);
-      if (inviteToken) {
-        try { await redeemInvite(inviteToken); } catch (e) { setInviteError(e.message || "Couldn't use that invite link."); }
+      try {
+        if (inviteToken) {
+          try { await redeemInvite(inviteToken); } catch (e) { setInviteError(e.message || "Couldn't use that invite link."); }
+        }
+        const m = await getMyMembership();
+        if (cancelled) return;
+        setMembership(m);
+      } catch (e) {
+        // A stale or invalid session (e.g. the account behind it was
+        // deleted) — sign out locally so the person lands back on the
+        // login screen instead of being stuck loading forever.
+        if (!cancelled) {
+          await signOut().catch(() => {});
+          setSession(null);
+          setMembership(null);
+        }
+      } finally {
+        if (!cancelled) setMembershipChecked(true);
       }
-      const m = await getMyMembership();
-      if (cancelled) return;
-      setMembership(m);
-      setMembershipChecked(true);
     })();
     return () => { cancelled = true; };
   }, [authChecked, session, inviteToken]);
@@ -470,23 +482,27 @@ export default function App() {
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.treatments) { remoteFlags.current.treatments = false; return; }
+    if (!canEdit) return; // viewers never attempt to save — RLS would reject it anyway
     saveKey("treatments", treatments).then(ok => setSyncError(!ok));
-  }, [treatments, ready]);
+  }, [treatments, ready, canEdit]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.appointments) { remoteFlags.current.appointments = false; return; }
+    if (!canEdit) return;
     saveKey("appointments", appointments).then(ok => setSyncError(!ok));
-  }, [appointments, ready]);
+  }, [appointments, ready, canEdit]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.entries) { remoteFlags.current.entries = false; return; }
+    if (!canEdit) return;
     saveKey("test-entries", entries).then(ok => setSyncError(!ok));
-  }, [entries, ready]);
+  }, [entries, ready, canEdit]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.patient) { remoteFlags.current.patient = false; return; }
+    if (!canEdit) return;
     saveKey("patient-info", patient).then(ok => setSyncError(!ok));
-  }, [patient, ready]);
+  }, [patient, ready, canEdit]);
   useEffect(() => {
     if (!ready) return;
     if (remoteFlags.current.cardOrder) { remoteFlags.current.cardOrder = false; return; }
@@ -503,13 +519,16 @@ export default function App() {
   async function forceSaveAll() {
     setSyncing(true);
     try {
-      const results = await Promise.all([
-        saveKey("treatments", treatments),
-        saveKey("appointments", appointments),
-        saveKey("test-entries", entries),
-        saveKey("patient-info", patient),
-        ...(canEdit ? [saveKey("summary-card-order", cardOrder), saveKey("tab-order", tabOrder)] : []),
-      ]);
+      const results = canEdit
+        ? await Promise.all([
+            saveKey("treatments", treatments),
+            saveKey("appointments", appointments),
+            saveKey("test-entries", entries),
+            saveKey("patient-info", patient),
+            saveKey("summary-card-order", cardOrder),
+            saveKey("tab-order", tabOrder),
+          ])
+        : [];
       const allOk = results.every(Boolean);
       setSyncError(!allOk);
       if (allOk) setLastSynced(new Date());

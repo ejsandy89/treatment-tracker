@@ -95,8 +95,14 @@ alter table app_data enable row level security;
 alter table support_messages enable row level security;
 
 -- ---------- households ----------
+-- "owner_id = auth.uid()" is included here (as well as household_role) so a
+-- brand-new owner can see the household they just created before their own
+-- household_members row exists yet — otherwise INSERT ... RETURNING (which
+-- needs SELECT permission on the row it hands back) gets stuck in a loop:
+-- can't view it until you're a member, can't become a member until you can
+-- view it to grab its id.
 create policy "members can view their household" on households
-  for select using (household_role(id) is not null);
+  for select using (household_role(id) is not null or owner_id = auth.uid());
 create policy "a user can create a household they own" on households
   for insert with check (auth.uid() = owner_id);
 create policy "owner or admin can update their household" on households
