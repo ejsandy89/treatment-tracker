@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import {
   ChevronLeft, ChevronRight, Plus, X, Trash2, FlaskConical, CalendarDays,
   Clock3, RotateCcw, TrendingUp, Settings as SettingsIcon, List, Grid3x3, User,
   LayoutDashboard, CalendarCheck2, CalendarClock, Layers, GripVertical,
-  Stethoscope, NotebookText, RefreshCw, Heart, ChevronDown, ChevronUp,
+  Stethoscope, NotebookText, RefreshCw, Heart, ChevronDown, ChevronUp, Droplet, Ruler,
 } from "lucide-react";
 import { loadKey, saveKey } from "./lib/storage.js";
 import { encryptPayload, decryptPayload } from "./lib/crypto.js";
@@ -49,7 +49,46 @@ const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const LINE_COLORS = [T.accent, T.info, T.warn, T.breach, T.navy, T.accentDeep, "#7A4E08"];
 const DEFAULT_CARD_ORDER = ["next", "nextAppointment", "completed", "remaining", "phaseEnd", "nextType", "supportMessages"];
-const DEFAULT_TAB_ORDER = ["summary", "calendar", "appointments", "support", "tests", "settings"];
+const DEFAULT_TAB_ORDER = ["summary", "calendar", "appointments", "bloods", "measurements", "support", "settings"];
+
+// A standard pre-chemotherapy blood panel, split into Haematology (FBC) and
+// Biochemistry (U&E/LFT/bone profile). "Normal" values here are illustrative
+// midpoints of typical adult reference ranges, for a general visual guide
+// only — actual reference ranges vary by lab, age and sex, and the figures
+// printed on a real lab report should always be treated as authoritative.
+const HAEMATOLOGY_ELEMENTS = [
+  { key: "Haemoglobin", unit: "g/L", normal: 140, range: "115–170 g/L" },
+  { key: "White Cell Count", unit: "x10⁹/L", normal: 7.5, range: "4.0–11.0 x10⁹/L" },
+  { key: "Platelet Count", unit: "x10⁹/L", normal: 275, range: "150–400 x10⁹/L" },
+  { key: "Red Blood Cell Count", unit: "x10¹²/L", normal: 4.75, range: "4.0–5.5 x10¹²/L" },
+  { key: "Haematocrit", unit: "%", normal: 43, range: "37–50%" },
+  { key: "Mean Cell Volume", unit: "fL", normal: 90, range: "80–100 fL" },
+  { key: "Mean Cell Haemoglobin", unit: "pg", normal: 30, range: "27–33 pg" },
+  { key: "Neutrophils", unit: "x10⁹/L", normal: 4.5, range: "2.0–7.5 x10⁹/L" },
+  { key: "Lymphocytes", unit: "x10⁹/L", normal: 2.5, range: "1.0–4.0 x10⁹/L" },
+  { key: "Monocytes", unit: "x10⁹/L", normal: 0.5, range: "0.2–0.8 x10⁹/L" },
+  { key: "Eosinophils", unit: "x10⁹/L", normal: 0.2, range: "0.0–0.4 x10⁹/L" },
+  { key: "Basophils", unit: "x10⁹/L", normal: 0.05, range: "0.0–0.1 x10⁹/L" },
+];
+const BIOCHEMISTRY_ELEMENTS = [
+  { key: "Sodium", unit: "mmol/L", normal: 140, range: "135–145 mmol/L" },
+  { key: "Potassium", unit: "mmol/L", normal: 4.2, range: "3.5–5.0 mmol/L" },
+  { key: "Urea", unit: "mmol/L", normal: 5, range: "2.5–7.8 mmol/L" },
+  { key: "Creatinine", unit: "µmol/L", normal: 85, range: "60–110 µmol/L" },
+  { key: "Calcium", unit: "mmol/L", normal: 2.4, range: "2.20–2.60 mmol/L" },
+  { key: "Adjusted Calcium", unit: "mmol/L", normal: 2.4, range: "2.20–2.60 mmol/L" },
+  { key: "Magnesium", unit: "mmol/L", normal: 0.85, range: "0.70–1.00 mmol/L" },
+  { key: "Inorganic Phosphate", unit: "mmol/L", normal: 1.15, range: "0.80–1.50 mmol/L" },
+  { key: "Albumin", unit: "g/L", normal: 42, range: "35–50 g/L" },
+  { key: "Alanine Transaminase", unit: "U/L", normal: 30, range: "7–56 U/L" },
+  { key: "Alkaline Phosphatase", unit: "U/L", normal: 80, range: "30–130 U/L" },
+  { key: "Total Bilirubin", unit: "µmol/L", normal: 10, range: "3–17 µmol/L" },
+];
+const BLOOD_ELEMENTS = [...HAEMATOLOGY_ELEMENTS, ...BIOCHEMISTRY_ELEMENTS];
+const BLOOD_ELEMENT_KEYS = BLOOD_ELEMENTS.map(e => e.key);
+const BLOOD_NORMALS = Object.fromEntries(BLOOD_ELEMENTS.map(e => [e.key, e]));
+const HAEMATOLOGY_KEYS = HAEMATOLOGY_ELEMENTS.map(e => e.key);
+const BIOCHEMISTRY_KEYS = BIOCHEMISTRY_ELEMENTS.map(e => e.key);
 const SUPPORT_QUOTES = [
   "You've got this!",
   "You are strong.",
@@ -135,6 +174,28 @@ async function summariseNotes(text) {
 
 const DEFAULT_PATIENT = { name: "", dob: "", address: "", height: "", weight: "" };
 
+// Bloods and Measurements each now have their own dedicated tab, rather than
+// living inside a generic multi-category "Test Results" list. This folds any
+// leftover categories (the old "MRI" name, or any custom tabs someone added)
+// into Measurements, so nothing gets lost, and returns just the two arrays
+// the app uses today.
+function migrateLegacyTestData(cats, entriesObj) {
+  let loadedCats = Array.isArray(cats) ? cats : ["Measurements"];
+  let loadedEntries = entriesObj && typeof entriesObj === "object" ? entriesObj : { Bloods: [], Measurements: [] };
+  if (loadedCats.includes("MRI") && !loadedCats.includes("Measurements")) {
+    loadedCats = loadedCats.map(name => (name === "MRI" ? "Measurements" : name));
+    const { MRI, ...rest } = loadedEntries;
+    loadedEntries = { ...rest, Measurements: MRI || [] };
+  }
+  let measurements = Array.isArray(loadedEntries.Measurements) ? [...loadedEntries.Measurements] : [];
+  loadedCats.forEach(cat => {
+    if (cat !== "Bloods" && cat !== "Measurements" && Array.isArray(loadedEntries[cat])) {
+      measurements = measurements.concat(loadedEntries[cat]);
+    }
+  });
+  return { Bloods: Array.isArray(loadedEntries.Bloods) ? loadedEntries.Bloods : [], Measurements: measurements };
+}
+
 // ================= GLOBAL RESPONSIVE STYLES =================
 const GLOBAL_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap');
@@ -150,7 +211,7 @@ const GLOBAL_CSS = `
 
   .tt-app { width: 100%; box-sizing: border-box; }
   .tt-splash {
-    min-height: 100dvh; width: 100%; box-sizing: border-box;
+    min-height: 100vh; min-height: 100dvh; width: 100%; box-sizing: border-box;
     display: flex; flex-direction: column; border-radius: 0;
   }
   .tt-splash-inner {
@@ -190,7 +251,7 @@ const GLOBAL_CSS = `
 
   /* ---- Mobile portrait & landscape ---- */
   @media (max-width: 640px) {
-    .tt-app { border-radius: 0 !important; border: none !important; min-height: 100dvh; }
+    .tt-app { border-radius: 0 !important; border: none !important; min-height: 100vh; min-height: 100dvh; }
     .tt-header {
       padding: calc(14px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 0 calc(14px + env(safe-area-inset-left));
     }
@@ -226,7 +287,6 @@ export default function App() {
 
   const [treatments, setTreatments] = useState([]);
   const [appointments, setAppointments] = useState([]);
-  const [categories, setCategories] = useState(["Bloods", "Measurements"]);
   const [entries, setEntries] = useState({ Bloods: [], Measurements: [] });
   const [patient, setPatient] = useState(DEFAULT_PATIENT);
   const [cardOrder, setCardOrder] = useState(DEFAULT_CARD_ORDER);
@@ -258,7 +318,6 @@ export default function App() {
       const results = await Promise.all([
         saveKey("treatments", treatments),
         saveKey("appointments", appointments),
-        saveKey("test-categories", categories),
         saveKey("test-entries", entries),
         saveKey("patient-info", patient),
         saveKey("summary-card-order", cardOrder),
@@ -279,24 +338,21 @@ export default function App() {
       const [t, appts, c, e, p, co, sm, to] = await Promise.all([
         loadKey("treatments", []),
         loadKey("appointments", []),
-        loadKey("test-categories", ["Bloods", "Measurements"]),
+        loadKey("test-categories", ["Measurements"]),
         loadKey("test-entries", { Bloods: [], Measurements: [] }),
         loadKey("patient-info", DEFAULT_PATIENT),
         loadKey("summary-card-order", DEFAULT_CARD_ORDER),
         loadKey("support-messages", []),
         loadKey("tab-order", DEFAULT_TAB_ORDER),
       ]);
-      let loadedCats = c;
-      let loadedEntries = e;
-      if (loadedCats.includes("MRI") && !loadedCats.includes("Measurements")) {
-        loadedCats = loadedCats.map(name => (name === "MRI" ? "Measurements" : name));
-        const { MRI, ...rest } = loadedEntries;
-        loadedEntries = { ...rest, Measurements: MRI || [] };
-      }
-      setTreatments(t); setAppointments(appts); setCategories(loadedCats); setEntries(loadedEntries); setPatient(p);
+      let loadedEntries = migrateLegacyTestData(c, e);
+      let loadedTabOrder = to && to.length === DEFAULT_TAB_ORDER.length
+        ? to.map(id => (id === "tests" ? "measurements" : id))
+        : DEFAULT_TAB_ORDER;
+      setTreatments(t); setAppointments(appts); setEntries(loadedEntries); setPatient(p);
       setCardOrder(co && co.length === DEFAULT_CARD_ORDER.length ? co : DEFAULT_CARD_ORDER);
       setSupportMessages(sm);
-      setTabOrder(to && to.length === DEFAULT_TAB_ORDER.length ? to : DEFAULT_TAB_ORDER);
+      setTabOrder(loadedTabOrder);
       setLastSynced(new Date());
       setReady(true);
 
@@ -336,7 +392,7 @@ export default function App() {
         const [t, appts, c, e, p, co, sm, to] = await Promise.all([
           loadKey("treatments", []),
           loadKey("appointments", []),
-          loadKey("test-categories", ["Bloods", "Measurements"]),
+          loadKey("test-categories", ["Measurements"]),
           loadKey("test-entries", { Bloods: [], Measurements: [] }),
           loadKey("patient-info", DEFAULT_PATIENT),
           loadKey("summary-card-order", DEFAULT_CARD_ORDER),
@@ -344,21 +400,14 @@ export default function App() {
           loadKey("tab-order", DEFAULT_TAB_ORDER),
         ]);
         if (cancelled) return;
-        let loadedCats = c;
-        let loadedEntries = e;
-        if (loadedCats.includes("MRI") && !loadedCats.includes("Measurements")) {
-          loadedCats = loadedCats.map(name => (name === "MRI" ? "Measurements" : name));
-          const { MRI, ...rest } = loadedEntries;
-          loadedEntries = { ...rest, Measurements: MRI || [] };
-        }
+        const loadedEntries = migrateLegacyTestData(c, e);
         applyRemote(setTreatments, "treatments", t);
         applyRemote(setAppointments, "appointments", appts);
-        applyRemote(setCategories, "categories", loadedCats);
         applyRemote(setEntries, "entries", loadedEntries);
         applyRemote(setPatient, "patient", p);
         applyRemote(setCardOrder, "cardOrder", co && co.length === DEFAULT_CARD_ORDER.length ? co : DEFAULT_CARD_ORDER);
         applyRemote(setSupportMessages, "supportMessages", sm);
-        applyRemote(setTabOrder, "tabOrder", to && to.length === DEFAULT_TAB_ORDER.length ? to : DEFAULT_TAB_ORDER);
+        applyRemote(setTabOrder, "tabOrder", to && to.length === DEFAULT_TAB_ORDER.length ? to.map(id => (id === "tests" ? "measurements" : id)) : DEFAULT_TAB_ORDER);
         setLastSynced(new Date());
       } finally {
         if (!cancelled) setSyncing(false);
@@ -393,12 +442,6 @@ export default function App() {
   }, [appointments, ready]);
   useEffect(() => {
     if (!ready) return;
-    if (remoteFlags.current.categories) { remoteFlags.current.categories = false; return; }
-    suppressUntil.current = Date.now() + 4000;
-    saveKey("test-categories", categories).then(ok => setSyncError(!ok));
-  }, [categories, ready]);
-  useEffect(() => {
-    if (!ready) return;
     if (remoteFlags.current.entries) { remoteFlags.current.entries = false; return; }
     suppressUntil.current = Date.now() + 4000;
     saveKey("test-entries", entries).then(ok => setSyncError(!ok));
@@ -428,7 +471,7 @@ export default function App() {
     saveKey("tab-order", tabOrder).then(ok => setSyncError(!ok));
   }, [tabOrder, ready]);
 
-  if (!splashDone) {
+  if (!splashDone || !ready) {
     return (
       <div className="tt-app tt-splash" style={{
         fontFamily: T.ui, background: `linear-gradient(160deg, ${T.navy}, ${T.accentDeep})`,
@@ -438,19 +481,21 @@ export default function App() {
         <div className="tt-splash-inner">
           <Heart size={44} fill={T.accentBright} color={T.accentBright} />
           <div style={{ fontSize: 27, fontWeight: 700, lineHeight: 1.35, maxWidth: 380 }}>{supportMessage}</div>
-          <button
-            className="tt-btn" onClick={() => setSplashDone(true)}
-            style={{ background: T.accentBright, color: T.navy, padding: "13px 32px", borderRadius: 10, fontWeight: 700, fontSize: 15 }}
-          >
-            Continue
-          </button>
+          {ready ? (
+            <button
+              className="tt-btn" onClick={() => setSplashDone(true)}
+              style={{ background: T.accentBright, color: T.navy, padding: "13px 32px", borderRadius: 10, fontWeight: 700, fontSize: 15 }}
+            >
+              Continue
+            </button>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 13, opacity: 0.85 }}>
+              <RefreshCw size={15} className="tt-spin" /> Loading your data…
+            </div>
+          )}
         </div>
       </div>
     );
-  }
-
-  if (!ready) {
-    return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 300, color: T.accent, fontFamily: T.ui }}>Loading…</div>;
   }
 
   const possessive = patient.name ? `${patient.name}’s` : "";
@@ -459,18 +504,23 @@ export default function App() {
     && Object.values(entries).every(arr => (arr || []).length === 0) && !patient.name;
 
   const exportBundle = {
-    treatments, appointments, categories, entries, patient, cardOrder, supportMessages, tabOrder,
+    treatments, appointments, entries, patient, cardOrder, supportMessages, tabOrder,
   };
 
   function importAllData(bundle) {
     setTreatments(Array.isArray(bundle.treatments) ? bundle.treatments : []);
     setAppointments(Array.isArray(bundle.appointments) ? bundle.appointments : []);
-    setCategories(Array.isArray(bundle.categories) && bundle.categories.length ? bundle.categories : ["Bloods", "Measurements"]);
-    setEntries(bundle.entries && typeof bundle.entries === "object" ? bundle.entries : { Bloods: [], Measurements: [] });
+    // Older backups may still have a "categories" list and extra entries keys
+    // from before Bloods/Measurements had their own tabs — fold those in too.
+    setEntries(migrateLegacyTestData(bundle.categories, bundle.entries));
     setPatient(bundle.patient && typeof bundle.patient === "object" ? { ...DEFAULT_PATIENT, ...bundle.patient } : DEFAULT_PATIENT);
     setCardOrder(Array.isArray(bundle.cardOrder) && bundle.cardOrder.length === DEFAULT_CARD_ORDER.length ? bundle.cardOrder : DEFAULT_CARD_ORDER);
     setSupportMessages(Array.isArray(bundle.supportMessages) ? bundle.supportMessages : []);
-    setTabOrder(Array.isArray(bundle.tabOrder) && bundle.tabOrder.length === DEFAULT_TAB_ORDER.length ? bundle.tabOrder : DEFAULT_TAB_ORDER);
+    setTabOrder(
+      Array.isArray(bundle.tabOrder) && bundle.tabOrder.length === DEFAULT_TAB_ORDER.length
+        ? bundle.tabOrder.map(id => (id === "tests" ? "measurements" : id))
+        : DEFAULT_TAB_ORDER
+    );
   }
 
   return (
@@ -507,7 +557,8 @@ export default function App() {
         {mainTab === "calendar" && <CalendarTab treatments={treatments} setTreatments={setTreatments} view={calendarView} setView={setCalendarView} />}
         {mainTab === "appointments" && <AppointmentsTab appointments={appointments} setAppointments={setAppointments} view={appointmentsView} setView={setAppointmentsView} />}
         {mainTab === "support" && <SupportMessagesTab messages={supportMessages} setMessages={setSupportMessages} />}
-        {mainTab === "tests" && <TestsTab categories={categories} setCategories={setCategories} entries={entries} setEntries={setEntries} />}
+        {mainTab === "bloods" && <BloodsTab bloodsEntries={entries.Bloods || []} setBloodsEntries={(updater) => setEntries(prev => ({ ...prev, Bloods: typeof updater === "function" ? updater(prev.Bloods || []) : updater }))} />}
+        {mainTab === "measurements" && <MeasurementsTab measurementsEntries={entries.Measurements || []} setMeasurementsEntries={(updater) => setEntries(prev => ({ ...prev, Measurements: typeof updater === "function" ? updater(prev.Measurements || []) : updater }))} />}
         {mainTab === "settings" && <SettingsTab patient={patient} setPatient={setPatient} exportBundle={exportBundle} onImportAll={importAllData} onBeforeImport={() => { suppressUntil.current = Date.now() + 4000; }} />}
       </div>
     </div>
@@ -519,8 +570,9 @@ const TAB_META = {
   summary: { icon: <LayoutDashboard size={15} />, label: "Summary" },
   calendar: { icon: <CalendarDays size={15} />, label: "Treatment Calendar" },
   appointments: { icon: <Stethoscope size={15} />, label: "Appointments" },
+  bloods: { icon: <Droplet size={15} />, label: "Bloods" },
   support: { icon: <Heart size={15} />, label: "Support Messages" },
-  tests: { icon: <FlaskConical size={15} />, label: "Test Results" },
+  measurements: { icon: <Ruler size={15} />, label: "Measurements" },
   settings: { icon: <SettingsIcon size={15} />, label: "Settings" },
 };
 
@@ -536,16 +588,18 @@ function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, synci
     summary: possessive ? `${possessive} Summary` : "Summary",
     calendar: possessive ? `${possessive} Treatment Tracker` : "Treatment Tracker",
     appointments: possessive ? `${possessive} Appointments` : "Appointments",
+    bloods: possessive ? `${possessive} Bloods` : "Bloods",
     support: "Support Messages",
-    tests: possessive ? `${possessive} Test Results` : "Test Results",
+    measurements: possessive ? `${possessive} Measurements` : "Measurements",
     settings: "Settings",
   };
   const subs = {
     summary: "Progress at a glance",
     calendar: "Care plan, appointments and rescheduling",
     appointments: "Consultant, registrar and surgical appointments",
+    bloods: "Blood test results over time, element by element",
     support: "Messages of love and encouragement",
-    tests: "Bloods, scans and results over time",
+    measurements: "Scan measurements and results over time",
     settings: "Patient details and app preferences",
   };
 
@@ -1236,146 +1290,188 @@ function EditTreatmentModal({ t, onClose, onSave, onDelete }) {
   );
 }
 
-// ================= TESTS TAB =================
-function TestsTab({ categories, setCategories, entries, setEntries }) {
-  const [active, setActive] = useState(categories[0] || "Bloods");
-  const [addingCat, setAddingCat] = useState(false);
-  const [newCatName, setNewCatName] = useState("");
+// ================= BLOODS TAB =================
+function BloodsTab({ bloodsEntries, setBloodsEntries }) {
+  const [sub, setSub] = useState("chart"); // chart | haematology | biochemistry | Other
+  const [selectedElement, setSelectedElement] = useState(HAEMATOLOGY_KEYS[0]);
 
-  useEffect(() => { if (!categories.includes(active) && categories.length) setActive(categories[0]); }, [categories]); // eslint-disable-line
+  useEffect(() => {
+    if (sub === "haematology" && !HAEMATOLOGY_KEYS.includes(selectedElement)) setSelectedElement(HAEMATOLOGY_KEYS[0]);
+    if (sub === "biochemistry" && !BIOCHEMISTRY_KEYS.includes(selectedElement)) setSelectedElement(BIOCHEMISTRY_KEYS[0]);
+  }, [sub]); // eslint-disable-line
 
-  function addCategory() {
-    const name = newCatName.trim();
-    if (!name || categories.includes(name)) { setAddingCat(false); setNewCatName(""); return; }
-    setCategories(prev => [...prev, name]);
-    setEntries(prev => ({ ...prev, [name]: [] }));
-    setActive(name); setAddingCat(false); setNewCatName("");
+  const knownElementSet = useMemo(() => new Set(BLOOD_ELEMENT_KEYS), []);
+  const otherEntries = useMemo(() => bloodsEntries.filter(e => !knownElementSet.has(e.description)), [bloodsEntries, knownElementSet]);
+
+  function addEntry(entry) {
+    setBloodsEntries(prev => [...prev, { id: uid(), ...entry }]);
   }
-  function removeCategory(name) {
-    if (!window.confirm(`Remove the "${name}" tab and all its entries?`)) return;
-    setCategories(prev => prev.filter(c => c !== name));
-    setEntries(prev => { const cp = { ...prev }; delete cp[name]; return cp; });
+  function deleteEntry(id) {
+    setBloodsEntries(prev => prev.filter(e => e.id !== id));
   }
 
-  const catEntries = entries[active] || [];
-  function addEntry(entry) { setEntries(prev => ({ ...prev, [active]: [...(prev[active] || []), { id: uid(), ...entry }] })); }
-  function deleteEntry(id) { setEntries(prev => ({ ...prev, [active]: (prev[active] || []).filter(e => e.id !== id) })); }
+  const topTabs = [
+    { id: "chart", label: "Chart", icon: <TrendingUp size={13} /> },
+    { id: "haematology", label: "Haematology" },
+    { id: "biochemistry", label: "Biochemistry" },
+    { id: "Other", label: "Other" },
+  ];
+  const elementRow = sub === "haematology" ? HAEMATOLOGY_KEYS : sub === "biochemistry" ? BIOCHEMISTRY_KEYS : null;
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
-        {categories.map(cat => (
-          <div key={cat} style={{ position: "relative", display: "flex", alignItems: "center" }}>
-            <button className="tt-btn" onClick={() => setActive(cat)} style={{
-              background: active === cat ? T.navy : T.card, color: active === cat ? "#fff" : T.ink,
-              border: `1px solid ${active === cat ? T.navy : T.line}`, borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 600,
-            }}>{cat}</button>
-            {categories.length > 1 && (
-              <button className="tt-btn" onClick={() => removeCategory(cat)} title={`Remove ${cat}`}
-                style={{ background: "transparent", padding: 2, marginLeft: -22, opacity: active === cat ? 0.85 : 0.35, color: active === cat ? "#fff" : T.ink }}>
-                <X size={12} />
-              </button>
-            )}
-          </div>
-        ))}
-        {!addingCat ? (
-          <button className="tt-btn" onClick={() => setAddingCat(true)} style={{ background: "transparent", color: T.accent, border: `1px dashed ${T.line}`, borderRadius: 20, padding: "8px 14px", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
-            <Plus size={14} /> New tab
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14, flexWrap: "wrap", overflowX: "auto" }}>
+        {topTabs.map(t => (
+          <button key={t.id} className="tt-btn" onClick={() => setSub(t.id)} style={{
+            background: sub === t.id ? T.navy : T.card, color: sub === t.id ? "#fff" : T.ink,
+            border: `1px solid ${sub === t.id ? T.navy : T.line}`, borderRadius: 20, padding: "8px 16px",
+            fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6,
+          }}>
+            {t.icon}{t.label}
           </button>
-        ) : (
-          <div style={{ display: "flex", gap: 6 }}>
-            <input autoFocus value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => e.key === "Enter" && addCategory()}
-              placeholder="e.g. CT Scan" style={{ ...inputStyle, width: 140, padding: "7px 10px" }} />
-            <button className="tt-btn" onClick={addCategory} style={{ background: T.accent, color: "#fff", borderRadius: 8, padding: "0 12px", fontSize: 13 }}>Add</button>
-          </div>
-        )}
+        ))}
       </div>
-      <TestCategoryPanel catName={active} catEntries={catEntries} onAdd={addEntry} onDelete={deleteEntry} />
+
+      {elementRow && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
+          {elementRow.map(key => (
+            <button key={key} className="tt-btn" onClick={() => setSelectedElement(key)} style={{
+              background: selectedElement === key ? T.accentSoft : T.card,
+              color: selectedElement === key ? T.accentDeep : T.inkSoft,
+              border: `1px solid ${selectedElement === key ? T.accent : T.line}`, borderRadius: 20, padding: "6px 13px",
+              fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
+            }}>
+              {key}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {sub === "chart" && <BloodsChartPanel bloodsEntries={bloodsEntries} />}
+      {sub === "Other" && (
+        <BloodElementPanel
+          elementName={null}
+          isOther
+          entries={otherEntries}
+          onAdd={addEntry}
+          onDelete={deleteEntry}
+        />
+      )}
+      {(sub === "haematology" || sub === "biochemistry") && (
+        <BloodElementPanel
+          elementName={selectedElement}
+          meta={BLOOD_NORMALS[selectedElement]}
+          entries={bloodsEntries.filter(e => e.description === selectedElement)}
+          onAdd={addEntry}
+          onDelete={deleteEntry}
+        />
+      )}
     </div>
   );
 }
 
-function TestCategoryPanel({ catName, catEntries, onAdd, onDelete }) {
-  const isMeasurements = catName === "Measurements";
-  const descLabel = isMeasurements ? "Scan type" : "Description";
-  const scoreLabel = isMeasurements ? "Measurement" : "Score";
-
+function BloodElementPanel({ elementName, meta, isOther, entries, onAdd, onDelete }) {
   const [date, setDate] = useState(todayStr());
-  const [description, setDescription] = useState(isMeasurements ? SCAN_TYPES[0] : "");
+  const [description, setDescription] = useState("");
   const [score, setScore] = useState("");
-  const [unit, setUnit] = useState("");
+  const [unit, setUnit] = useState(meta ? meta.unit : "");
 
-  useEffect(() => { if (isMeasurements && !description) setDescription(SCAN_TYPES[0]); }, [isMeasurements]); // eslint-disable-line
-
-  const knownDescriptions = useMemo(() => Array.from(new Set(catEntries.map(e => e.description))), [catEntries]);
-  const sorted = useMemo(() => [...catEntries].sort((a, b) => b.date.localeCompare(a.date)), [catEntries]);
-  const chartData = useMemo(() => buildChartData(catEntries), [catEntries]);
-  const seriesNames = useMemo(() => Array.from(new Set(catEntries.filter(e => !isNaN(parseFloat(e.score))).map(e => e.description))), [catEntries]);
-
-  const [selectedDescs, setSelectedDescs] = useState({});
-  useEffect(() => {
-    setSelectedDescs(prev => {
-      const next = { ...prev };
-      let changed = false;
-      seriesNames.forEach(n => { if (!(n in next)) { next[n] = true; changed = true; } });
-      return changed ? next : prev;
-    });
-  }, [seriesNames]);
-  const visibleSeries = seriesNames.filter(n => selectedDescs[n] !== false);
-  function toggleDesc(name) { setSelectedDescs(prev => ({ ...prev, [name]: prev[name] === false ? true : false })); }
+  const sorted = useMemo(() => [...entries].sort((a, b) => b.date.localeCompare(a.date)), [entries]);
+  const knownDescriptions = useMemo(() => Array.from(new Set(entries.map(e => e.description))), [entries]);
 
   function handleAdd() {
-    if (!description.trim() || !date) return;
-    onAdd({ date, description: description.trim(), score: score.trim(), unit: unit.trim() });
-    setScore(""); setUnit("");
-    if (!isMeasurements) setDescription("");
+    const desc = isOther ? description.trim() : elementName;
+    if (!desc || !date) return;
+    onAdd({ date, description: desc, score: score.trim(), unit: unit.trim() });
+    setScore("");
+    if (isOther) setDescription("");
   }
 
   return (
     <div>
       <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep }}>Add a {catName.toLowerCase()} result</div>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, color: T.accentDeep }}>
+          {isOther ? "Add another blood result" : `Add a ${elementName} result`}
+        </div>
+        {meta && <div style={{ fontSize: 11.5, color: T.inkSoft, marginBottom: 12 }}>Typical normal range: {meta.range}</div>}
         <div className="tt-add-form">
           <div><div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Date</div><input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} /></div>
-          <div>
-            <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>{descLabel}</div>
-            {isMeasurements ? (
-              <select className="tt-select" value={description} onChange={e => setDescription(e.target.value)} style={inputStyle}>
-                {SCAN_TYPES.map(s => <option key={s}>{s}</option>)}
-              </select>
-            ) : (
-              <>
-                <input list="descList" value={description} onChange={e => setDescription(e.target.value)} placeholder="e.g. Haemoglobin" style={inputStyle} />
-                <datalist id="descList">{knownDescriptions.map(d => <option key={d} value={d} />)}</datalist>
-              </>
-            )}
-          </div>
-          <div><div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>{scoreLabel}</div><input value={score} onChange={e => setScore(e.target.value)} placeholder="e.g. 118" style={inputStyle} /></div>
-          <div><div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Unit</div><input value={unit} onChange={e => setUnit(e.target.value)} placeholder={isMeasurements ? "mm" : "g/L"} style={inputStyle} /></div>
+          {isOther ? (
+            <div>
+              <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Description</div>
+              <input list="bloodOtherList" value={description} onChange={e => setDescription(e.target.value)} placeholder="e.g. Ferritin" style={inputStyle} />
+              <datalist id="bloodOtherList">{knownDescriptions.map(d => <option key={d} value={d} />)}</datalist>
+            </div>
+          ) : <div />}
+          <div><div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Score</div><input value={score} onChange={e => setScore(e.target.value)} placeholder="e.g. 118" style={inputStyle} /></div>
+          <div><div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Unit</div><input value={unit} onChange={e => setUnit(e.target.value)} placeholder={meta ? meta.unit : "unit"} style={inputStyle} /></div>
           <button className="tt-btn" onClick={handleAdd} style={{ background: T.accent, color: "#fff", borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>Add</button>
         </div>
       </div>
 
-      {seriesNames.length > 0 && (
-        <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}><TrendingUp size={15} /> Trend over time</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
-            {seriesNames.map((name, i) => {
-              const on = selectedDescs[name] !== false;
-              const color = LINE_COLORS[i % LINE_COLORS.length];
-              return (
-                <label key={name} onClick={() => toggleDesc(name)} style={{
-                  display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none",
-                  padding: "5px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-                  background: on ? `${color}1A` : T.lineSoft, color: on ? T.ink : T.inkSoft,
-                  border: `1px solid ${on ? color : T.line}`,
-                }}>
-                  <span style={{ width: 10, height: 10, borderRadius: 3, display: "inline-block", background: on ? color : "transparent", border: `1.5px solid ${on ? color : T.inkSoft}` }} />
-                  {name}
-                </label>
-              );
-            })}
-          </div>
+      <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12 }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 13 }}>
+          <thead><tr style={{ background: T.paper, textAlign: "left" }}><th style={thStyle}>Date</th>{isOther && <th style={thStyle}>Description</th>}<th style={thStyle}>Score</th><th style={thStyle}></th></tr></thead>
+          <tbody>
+            {sorted.length === 0 && <tr><td colSpan={isOther ? 4 : 3} style={{ padding: 18, textAlign: "center", color: T.inkSoft, fontSize: 12.5 }}>No results yet — add the first one above.</td></tr>}
+            {sorted.map(e => (
+              <tr key={e.id} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
+                <td style={{ ...tdStyle, fontFamily: T.mono }}>{fmtDate(e.date)}</td>
+                {isOther && <td style={tdStyle}>{e.description}</td>}
+                <td style={{ ...tdStyle, fontFamily: T.mono }}>{e.score}{e.unit ? ` ${e.unit}` : ""}</td>
+                <td style={{ ...tdStyle, textAlign: "right" }}><button className="tt-btn" onClick={() => onDelete(e.id)} style={{ background: "transparent", color: T.breach, padding: 4 }}><Trash2 size={14} /></button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function BloodsChartPanel({ bloodsEntries }) {
+  const seriesNames = useMemo(
+    () => Array.from(new Set(bloodsEntries.filter(e => !isNaN(parseFloat(e.score))).map(e => e.description))),
+    [bloodsEntries]
+  );
+  const chartData = useMemo(() => buildChartData(bloodsEntries), [bloodsEntries]);
+
+  // Default to nothing selected — the user picks what they want to see.
+  const [selected, setSelected] = useState({});
+  function toggle(name) { setSelected(prev => ({ ...prev, [name]: !prev[name] })); }
+  const visibleSeries = seriesNames.filter(n => selected[n]);
+  const singleSelected = visibleSeries.length === 1 ? visibleSeries[0] : null;
+  const singleNormal = singleSelected ? BLOOD_NORMALS[singleSelected] : null;
+
+  if (seriesNames.length === 0) {
+    return <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>No results recorded yet — add some from the element tabs above.</div>;
+  }
+
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}><TrendingUp size={15} /> Trend over time</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+        {seriesNames.map((name, i) => {
+          const on = !!selected[name];
+          const color = LINE_COLORS[i % LINE_COLORS.length];
+          return (
+            <label key={name} onClick={() => toggle(name)} style={{
+              display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none",
+              padding: "5px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+              background: on ? `${color}1A` : T.lineSoft, color: on ? T.ink : T.inkSoft,
+              border: `1px solid ${on ? color : T.line}`,
+            }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, display: "inline-block", background: on ? color : "transparent", border: `1.5px solid ${on ? color : T.inkSoft}` }} />
+              {name}
+            </label>
+          );
+        })}
+      </div>
+
+      {visibleSeries.length === 0 ? (
+        <div style={{ padding: "30px 0", textAlign: "center", color: T.inkSoft, fontSize: 13 }}>Select one or more elements above to see their trend.</div>
+      ) : (
+        <>
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={T.lineSoft} />
@@ -1383,19 +1479,98 @@ function TestCategoryPanel({ catName, catEntries, onAdd, onDelete }) {
               <YAxis tick={{ fontSize: 11, fill: T.inkSoft }} />
               <Tooltip labelFormatter={fmtDate} contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.line}` }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
+              {singleNormal && (
+                <ReferenceLine
+                  y={singleNormal.normal} stroke={T.inkSoft} strokeDasharray="5 4"
+                  label={{ value: "Typical normal", position: "insideTopRight", fill: T.inkSoft, fontSize: 11 }}
+                />
+              )}
               {seriesNames.map((name, i) => visibleSeries.includes(name) && (
                 <Line key={name} type="monotone" dataKey={name} stroke={LINE_COLORS[i % LINE_COLORS.length]} connectNulls dot={{ r: 3 }} strokeWidth={2} name={name} />
               ))}
             </LineChart>
           </ResponsiveContainer>
-        </div>
+          {singleNormal && (
+            <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 10 }}>
+              Dashed line shows a typical normal reference value for {singleSelected} ({singleNormal.range}). Reference
+              ranges vary by lab, age and sex — always check the range printed on the actual lab report.
+            </div>
+          )}
+        </>
       )}
+    </div>
+  );
+}
+
+// ================= MEASUREMENTS TAB =================
+function MeasurementsTab({ measurementsEntries, setMeasurementsEntries }) {
+  const [sub, setSub] = useState("chart");
+
+  function addEntry(entry) { setMeasurementsEntries(prev => [...prev, { id: uid(), ...entry }]); }
+  function deleteEntry(id) { setMeasurementsEntries(prev => prev.filter(e => e.id !== id)); }
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
+        <button className="tt-btn" onClick={() => setSub("chart")} style={{
+          background: sub === "chart" ? T.navy : T.card, color: sub === "chart" ? "#fff" : T.ink,
+          border: `1px solid ${sub === "chart" ? T.navy : T.line}`, borderRadius: 20, padding: "8px 16px",
+          fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <TrendingUp size={13} /> Chart
+        </button>
+        <button className="tt-btn" onClick={() => setSub("entry")} style={{
+          background: sub === "entry" ? T.navy : T.card, color: sub === "entry" ? "#fff" : T.ink,
+          border: `1px solid ${sub === "entry" ? T.navy : T.line}`, borderRadius: 20, padding: "8px 16px",
+          fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <Plus size={13} /> Add Measurement
+        </button>
+      </div>
+
+      {sub === "chart" && <MeasurementsChartPanel entries={measurementsEntries} />}
+      {sub === "entry" && <MeasurementsEntryPanel entries={measurementsEntries} onAdd={addEntry} onDelete={deleteEntry} />}
+    </div>
+  );
+}
+
+function MeasurementsEntryPanel({ entries, onAdd, onDelete }) {
+  const [date, setDate] = useState(todayStr());
+  const [scanType, setScanType] = useState(SCAN_TYPES[0]);
+  const [score, setScore] = useState("");
+  const [unit, setUnit] = useState("");
+
+  const sorted = useMemo(() => [...entries].sort((a, b) => b.date.localeCompare(a.date)), [entries]);
+
+  function handleAdd() {
+    if (!scanType || !date) return;
+    onAdd({ date, description: scanType, score: score.trim(), unit: unit.trim() });
+    setScore(""); setUnit("");
+  }
+
+  return (
+    <div>
+      <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep }}>Add a measurement</div>
+        <div className="tt-add-form">
+          <div><div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Date</div><input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} /></div>
+          <div>
+            <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Scan type</div>
+            <select className="tt-select" value={scanType} onChange={e => setScanType(e.target.value)} style={inputStyle}>
+              {SCAN_TYPES.map(s => <option key={s}>{s}</option>)}
+            </select>
+          </div>
+          <div><div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Measurement</div><input value={score} onChange={e => setScore(e.target.value)} placeholder="e.g. 22" style={inputStyle} /></div>
+          <div><div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Unit</div><input value={unit} onChange={e => setUnit(e.target.value)} placeholder="mm" style={inputStyle} /></div>
+          <button className="tt-btn" onClick={handleAdd} style={{ background: T.accent, color: "#fff", borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>Add</button>
+        </div>
+      </div>
 
       <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12 }}>
         <table style={{ borderCollapse: "collapse", fontSize: 13 }}>
-          <thead><tr style={{ background: T.paper, textAlign: "left" }}><th style={thStyle}>Date</th><th style={thStyle}>{descLabel}</th><th style={thStyle}>{scoreLabel}</th><th style={thStyle}></th></tr></thead>
+          <thead><tr style={{ background: T.paper, textAlign: "left" }}><th style={thStyle}>Date</th><th style={thStyle}>Scan type</th><th style={thStyle}>Measurement</th><th style={thStyle}></th></tr></thead>
           <tbody>
-            {sorted.length === 0 && <tr><td colSpan={4} style={{ padding: 18, textAlign: "center", color: T.inkSoft, fontSize: 12.5 }}>No results yet — add the first one above.</td></tr>}
+            {sorted.length === 0 && <tr><td colSpan={4} style={{ padding: 18, textAlign: "center", color: T.inkSoft, fontSize: 12.5 }}>No measurements yet — add the first one above.</td></tr>}
             {sorted.map(e => (
               <tr key={e.id} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
                 <td style={{ ...tdStyle, fontFamily: T.mono }}>{fmtDate(e.date)}</td>
@@ -1407,6 +1582,63 @@ function TestCategoryPanel({ catName, catEntries, onAdd, onDelete }) {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function MeasurementsChartPanel({ entries }) {
+  const seriesNames = useMemo(
+    () => Array.from(new Set(entries.filter(e => !isNaN(parseFloat(e.score))).map(e => e.description))),
+    [entries]
+  );
+  const chartData = useMemo(() => buildChartData(entries), [entries]);
+
+  // Default to nothing selected — the user picks what they want to see.
+  const [selected, setSelected] = useState({});
+  function toggle(name) { setSelected(prev => ({ ...prev, [name]: !prev[name] })); }
+  const visibleSeries = seriesNames.filter(n => selected[n]);
+
+  if (seriesNames.length === 0) {
+    return <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>No measurements recorded yet — add some from the Add Measurement tab above.</div>;
+  }
+
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}><TrendingUp size={15} /> Trend over time</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+        {seriesNames.map((name, i) => {
+          const on = !!selected[name];
+          const color = LINE_COLORS[i % LINE_COLORS.length];
+          return (
+            <label key={name} onClick={() => toggle(name)} style={{
+              display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none",
+              padding: "5px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+              background: on ? `${color}1A` : T.lineSoft, color: on ? T.ink : T.inkSoft,
+              border: `1px solid ${on ? color : T.line}`,
+            }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, display: "inline-block", background: on ? color : "transparent", border: `1.5px solid ${on ? color : T.inkSoft}` }} />
+              {name}
+            </label>
+          );
+        })}
+      </div>
+
+      {visibleSeries.length === 0 ? (
+        <div style={{ padding: "30px 0", textAlign: "center", color: T.inkSoft, fontSize: 13 }}>Select one or more scan types above to see their trend.</div>
+      ) : (
+        <ResponsiveContainer width="100%" height={280}>
+          <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke={T.lineSoft} />
+            <XAxis dataKey="date" tick={{ fontSize: 11, fill: T.inkSoft }} tickFormatter={fmtDate} />
+            <YAxis tick={{ fontSize: 11, fill: T.inkSoft }} />
+            <Tooltip labelFormatter={fmtDate} contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.line}` }} />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            {seriesNames.map((name, i) => visibleSeries.includes(name) && (
+              <Line key={name} type="monotone" dataKey={name} stroke={LINE_COLORS[i % LINE_COLORS.length]} connectNulls dot={{ r: 3 }} strokeWidth={2} name={name} />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      )}
     </div>
   );
 }
