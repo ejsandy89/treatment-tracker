@@ -8,7 +8,11 @@ import {
   LayoutDashboard, CalendarCheck2, CalendarClock, Layers, GripVertical,
   Stethoscope, NotebookText, RefreshCw, Heart, ChevronDown, ChevronUp, Droplet, Ruler,
 } from "lucide-react";
-import { loadKey, saveKey } from "./lib/storage.js";
+import {
+  loadKey, saveKey, getSession, onAuthChange, signUp, signIn, signOut,
+  getMyMembership, createHousehold, redeemInvite, createInvite, listInvites, revokeInvite, listMembers,
+  setActiveHousehold, listSupportMessages, addSupportMessage, deleteSupportMessage, subscribeToHousehold,
+} from "./lib/db.js";
 import { encryptPayload, decryptPayload } from "./lib/crypto.js";
 
 // ---------- brand tokens (Student Roost) ----------
@@ -38,6 +42,10 @@ const STATUS_META = {
 };
 const TREATMENT_TYPES = ["Chemotherapy", "Immunotherapy", "Surgery", "Radiotherapy", "Other"];
 const SCAN_TYPES = ["MRI", "Mammogram", "CT", "Ultrasound", "Other"];
+// Lesion/tumour measurements are conventionally recorded in millimetres
+// regardless of scan modality — kept as a map so a different default could
+// be set per scan type later if needed.
+const SCAN_UNITS = { MRI: "mm", Mammogram: "mm", CT: "mm", Ultrasound: "mm", Other: "mm" };
 const APPT_ROLES = ["Consultant", "Registrar", "Surgeon", "Other"];
 const ROLE_STYLES = {
   Consultant: { bg: T.infoBg, border: T.info, text: "#2C4172" },
@@ -240,6 +248,10 @@ const GLOBAL_CSS = `
   .tt-day-cell { padding: 6px 6px 8px; display: flex; flex-direction: column; gap: 4px; box-sizing: border-box; }
   .tt-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .tt-table-wrap table { min-width: 460px; width: 100%; }
+  .tt-table-wrap thead th {
+    position: sticky; top: 0; z-index: 2;
+    background: ${T.paper}; box-shadow: 0 1px 0 ${T.line};
+  }
   .tt-settings-card { max-width: 520px; width: 100%; box-sizing: border-box; }
   .tt-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   .tt-add-form { display: grid; grid-template-columns: 140px 1fr 100px 90px auto; gap: 8px; align-items: end; }
@@ -280,6 +292,14 @@ const GLOBAL_CSS = `
 `;
 
 export default function App() {
+  // ----- Auth & household -----
+  const [authChecked, setAuthChecked] = useState(false);
+  const [session, setSession] = useState(null);
+  const [membership, setMembership] = useState(null); // { householdId, role, householdName }
+  const [membershipChecked, setMembershipChecked] = useState(false);
+  const [inviteToken, setInviteToken] = useState(null);
+  const [inviteError, setInviteError] = useState("");
+
   const [ready, setReady] = useState(false);
   const [mainTab, setMainTab] = useState("summary");
   const [calendarView, setCalendarView] = useState("summary");
@@ -303,7 +323,12 @@ export default function App() {
   const [syncError, setSyncError] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const remoteFlags = useRef({});
-  const refreshRef = useRef(() => {});
+
+  const householdId = membership?.householdId || null;
+  const role = membership?.role || null;
+  const isOwner = role === "owner";
+  const canEdit = role === "owner" || role === "admin" || role === "editor";
+  const canManageHousehold = role === "owner" || role === "admin";
 
   function goTo(tab, view) {
     setMainTab(tab);
@@ -311,18 +336,179 @@ export default function App() {
     if (tab === "appointments" && view) setAppointmentsView(view);
   }
 
+  // 1. Pick up an invite token from the URL (?invite=...), once.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("invite");
+    if (token) setInviteToken(token);
+  }, []);
+
+  // 2. Track the auth session.
+  useEffect(() => {
+    let subscription;
+    (async () => {
+      const s = await getSession();
+      setSession(s);
+      setAuthChecked(true);
+      subscription = onAuthChange(newSession => setSession(newSession));
+    })();
+    return () => { if (subscription) subscription.unsubscribe(); };
+  }, []);
+
+  // 3. Once signed in, redeem any pending invite and resolve household membership.
+  useEffect(() => {
+    if (!authChecked) return;
+    if (!session) { setMembership(null); setMembershipChecked(true); return; }
+    let cancelled = false;
+    (async () => {
+      setMembershipChecked(false);
+      if (inviteToken) {
+        try { await redeemInvite(inviteToken); } catch (e) { setInviteError(e.message || "Couldn't use that invite link."); }
+      }
+      const m = await getMyMembership();
+      if (cancelled) return;
+      setMembership(m);
+      setMembershipChecked(true);
+    })();
+    return () => { cancelled = true; };
+  }, [authChecked, session, inviteToken]);
+
+  useEffect(() => { if (householdId) setActiveHousehold(householdId); }, [householdId]);
+
+  // 4. Load everything once we know which household this is.
+  useEffect(() => {
+    if (!householdId) return;
+    (async () => {
+      const [t, appts, e, p, co, to, sm] = await Promise.all([
+        loadKey("treatments", []),
+        loadKey("appointments", []),
+        loadKey("test-entries", { Bloods: [], Measurements: [] }),
+        loadKey("patient-info", DEFAULT_PATIENT),
+        loadKey("summary-card-order", DEFAULT_CARD_ORDER),
+        loadKey("tab-order", DEFAULT_TAB_ORDER),
+        listSupportMessages(),
+      ]);
+      const loadedEntries = migrateLegacyTestData(null, e);
+      setTreatments(t); setAppointments(appts); setEntries(loadedEntries); setPatient(p);
+      setCardOrder(co && co.length === DEFAULT_CARD_ORDER.length ? co : DEFAULT_CARD_ORDER);
+      setTabOrder(to && to.length === DEFAULT_TAB_ORDER.length ? to.map(id => (id === "tests" ? "measurements" : id)) : DEFAULT_TAB_ORDER);
+      setSupportMessages(sm);
+      setLastSynced(new Date());
+      setReady(true);
+
+      if (!featuredPickedRef.current && sm && sm.length > 0) {
+        featuredPickedRef.current = true;
+        const chosen = sm[Math.floor(Math.random() * sm.length)];
+        setFeaturedMsg(chosen);
+        summariseSupportMessage(chosen.message).then(setFeaturedSummary);
+      }
+    })();
+  }, [householdId]);
+
+  // 5. Live sync via Supabase Realtime — pushed the instant someone else saves,
+  // rather than polling. Applies changes only where they actually differ, and
+  // flags that key so the save-effect below doesn't write it straight back.
+  const refreshAllRef = useRef(() => {});
+  useEffect(() => {
+    if (!householdId || !ready) return;
+
+    function applyIfChanged(setter, flagKey, newVal) {
+      setter(prev => {
+        if (JSON.stringify(prev) === JSON.stringify(newVal)) return prev;
+        remoteFlags.current[flagKey] = true;
+        return newVal;
+      });
+    }
+
+    const KEY_TO_FLAG = {
+      "treatments": "treatments", "appointments": "appointments", "test-entries": "entries",
+      "patient-info": "patient", "summary-card-order": "cardOrder", "tab-order": "tabOrder",
+    };
+    const KEY_FALLBACK = {
+      "treatments": [], "appointments": [], "test-entries": { Bloods: [], Measurements: [] },
+      "patient-info": DEFAULT_PATIENT, "summary-card-order": DEFAULT_CARD_ORDER, "tab-order": DEFAULT_TAB_ORDER,
+    };
+
+    async function refreshAll() {
+      setSyncing(true);
+      try {
+        const [t, appts, e, p, co, to, sm] = await Promise.all([
+          loadKey("treatments", []), loadKey("appointments", []),
+          loadKey("test-entries", { Bloods: [], Measurements: [] }), loadKey("patient-info", DEFAULT_PATIENT),
+          loadKey("summary-card-order", DEFAULT_CARD_ORDER), loadKey("tab-order", DEFAULT_TAB_ORDER),
+          listSupportMessages(),
+        ]);
+        applyIfChanged(setTreatments, "treatments", t);
+        applyIfChanged(setAppointments, "appointments", appts);
+        applyIfChanged(setEntries, "entries", migrateLegacyTestData(null, e));
+        applyIfChanged(setPatient, "patient", p);
+        applyIfChanged(setCardOrder, "cardOrder", co && co.length === DEFAULT_CARD_ORDER.length ? co : DEFAULT_CARD_ORDER);
+        applyIfChanged(setTabOrder, "tabOrder", to && to.length === DEFAULT_TAB_ORDER.length ? to.map(id => (id === "tests" ? "measurements" : id)) : DEFAULT_TAB_ORDER);
+        setSupportMessages(sm);
+        setLastSynced(new Date());
+        setSyncError(false);
+      } finally {
+        setSyncing(false);
+      }
+    }
+    refreshAllRef.current = refreshAll;
+
+    const unsubscribe = subscribeToHousehold(householdId, async (table) => {
+      if (table === "support_messages") {
+        setSupportMessages(await listSupportMessages());
+        setLastSynced(new Date());
+        return;
+      }
+      // app_data changed — a full refresh is cheap enough at this scale and
+      // keeps the "what changed" logic in one place.
+      refreshAll();
+    });
+
+    return unsubscribe;
+  }, [householdId, ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (remoteFlags.current.treatments) { remoteFlags.current.treatments = false; return; }
+    saveKey("treatments", treatments).then(ok => setSyncError(!ok));
+  }, [treatments, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    if (remoteFlags.current.appointments) { remoteFlags.current.appointments = false; return; }
+    saveKey("appointments", appointments).then(ok => setSyncError(!ok));
+  }, [appointments, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    if (remoteFlags.current.entries) { remoteFlags.current.entries = false; return; }
+    saveKey("test-entries", entries).then(ok => setSyncError(!ok));
+  }, [entries, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    if (remoteFlags.current.patient) { remoteFlags.current.patient = false; return; }
+    saveKey("patient-info", patient).then(ok => setSyncError(!ok));
+  }, [patient, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    if (remoteFlags.current.cardOrder) { remoteFlags.current.cardOrder = false; return; }
+    if (!canEdit) return; // viewers can still drag to reorder locally, just nothing to save
+    saveKey("summary-card-order", cardOrder).then(ok => setSyncError(!ok));
+  }, [cardOrder, ready, canEdit]);
+  useEffect(() => {
+    if (!ready) return;
+    if (remoteFlags.current.tabOrder) { remoteFlags.current.tabOrder = false; return; }
+    if (!canEdit) return;
+    saveKey("tab-order", tabOrder).then(ok => setSyncError(!ok));
+  }, [tabOrder, ready, canEdit]);
+
   async function forceSaveAll() {
     setSyncing(true);
-    suppressUntil.current = Date.now() + 4000;
     try {
       const results = await Promise.all([
         saveKey("treatments", treatments),
         saveKey("appointments", appointments),
         saveKey("test-entries", entries),
         saveKey("patient-info", patient),
-        saveKey("summary-card-order", cardOrder),
-        saveKey("support-messages", supportMessages),
-        saveKey("tab-order", tabOrder),
+        ...(canEdit ? [saveKey("summary-card-order", cardOrder), saveKey("tab-order", tabOrder)] : []),
       ]);
       const allOk = results.every(Boolean);
       setSyncError(!allOk);
@@ -331,145 +517,17 @@ export default function App() {
       setSyncing(false);
     }
   }
-  const suppressUntil = useRef(0);
 
-  useEffect(() => {
-    (async () => {
-      const [t, appts, c, e, p, co, sm, to] = await Promise.all([
-        loadKey("treatments", []),
-        loadKey("appointments", []),
-        loadKey("test-categories", ["Measurements"]),
-        loadKey("test-entries", { Bloods: [], Measurements: [] }),
-        loadKey("patient-info", DEFAULT_PATIENT),
-        loadKey("summary-card-order", DEFAULT_CARD_ORDER),
-        loadKey("support-messages", []),
-        loadKey("tab-order", DEFAULT_TAB_ORDER),
-      ]);
-      let loadedEntries = migrateLegacyTestData(c, e);
-      let loadedTabOrder = to && to.length === DEFAULT_TAB_ORDER.length
-        ? to.map(id => (id === "tests" ? "measurements" : id))
-        : DEFAULT_TAB_ORDER;
-      setTreatments(t); setAppointments(appts); setEntries(loadedEntries); setPatient(p);
-      setCardOrder(co && co.length === DEFAULT_CARD_ORDER.length ? co : DEFAULT_CARD_ORDER);
-      setSupportMessages(sm);
-      setTabOrder(loadedTabOrder);
-      setLastSynced(new Date());
-      setReady(true);
-
-      // Pick one message of support to feature for this session — stays the
-      // same for the whole visit, and will be a different one next time.
-      if (!featuredPickedRef.current && sm && sm.length > 0) {
-        featuredPickedRef.current = true;
-        const chosen = sm[Math.floor(Math.random() * sm.length)];
-        setFeaturedMsg(chosen);
-        summariseSupportMessage(chosen.message).then(setFeaturedSummary);
-      }
-    })();
-  }, []);
-
-  // Live sync: poll for changes made by other people, and refresh whenever
-  // the app regains focus/visibility (e.g. switching back from another app).
-  // A refresh applies remote data only where it actually differs, and flags
-  // that key so the save-effect below doesn't immediately write it straight
-  // back — otherwise every poll would trigger a redundant save.
-  useEffect(() => {
-    if (!ready) return;
-    let cancelled = false;
-
-    function applyRemote(setter, flagKey, newVal) {
-      setter(prev => {
-        if (JSON.stringify(prev) === JSON.stringify(newVal)) return prev;
-        remoteFlags.current[flagKey] = true;
-        return newVal;
-      });
-    }
-
-    async function refresh() {
-      if (cancelled) return;
-      if (Date.now() < suppressUntil.current) return; // a local save just happened — don't race it
-      setSyncing(true);
-      try {
-        const [t, appts, c, e, p, co, sm, to] = await Promise.all([
-          loadKey("treatments", []),
-          loadKey("appointments", []),
-          loadKey("test-categories", ["Measurements"]),
-          loadKey("test-entries", { Bloods: [], Measurements: [] }),
-          loadKey("patient-info", DEFAULT_PATIENT),
-          loadKey("summary-card-order", DEFAULT_CARD_ORDER),
-          loadKey("support-messages", []),
-          loadKey("tab-order", DEFAULT_TAB_ORDER),
-        ]);
-        if (cancelled) return;
-        const loadedEntries = migrateLegacyTestData(c, e);
-        applyRemote(setTreatments, "treatments", t);
-        applyRemote(setAppointments, "appointments", appts);
-        applyRemote(setEntries, "entries", loadedEntries);
-        applyRemote(setPatient, "patient", p);
-        applyRemote(setCardOrder, "cardOrder", co && co.length === DEFAULT_CARD_ORDER.length ? co : DEFAULT_CARD_ORDER);
-        applyRemote(setSupportMessages, "supportMessages", sm);
-        applyRemote(setTabOrder, "tabOrder", to && to.length === DEFAULT_TAB_ORDER.length ? to.map(id => (id === "tests" ? "measurements" : id)) : DEFAULT_TAB_ORDER);
-        setLastSynced(new Date());
-      } finally {
-        if (!cancelled) setSyncing(false);
-      }
-    }
-
-    const intervalId = setInterval(refresh, 30000); // every 30s while open
-    function onVisibilityChange() { if (document.visibilityState === "visible") refresh(); }
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("focus", refresh);
-    refreshRef.current = refresh;
-
-    return () => {
-      cancelled = true;
-      clearInterval(intervalId);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("focus", refresh);
-    };
-  }, [ready]);
-
-  useEffect(() => {
-    if (!ready) return;
-    if (remoteFlags.current.treatments) { remoteFlags.current.treatments = false; return; }
-    suppressUntil.current = Date.now() + 4000;
-    saveKey("treatments", treatments).then(ok => setSyncError(!ok));
-  }, [treatments, ready]);
-  useEffect(() => {
-    if (!ready) return;
-    if (remoteFlags.current.appointments) { remoteFlags.current.appointments = false; return; }
-    suppressUntil.current = Date.now() + 4000;
-    saveKey("appointments", appointments).then(ok => setSyncError(!ok));
-  }, [appointments, ready]);
-  useEffect(() => {
-    if (!ready) return;
-    if (remoteFlags.current.entries) { remoteFlags.current.entries = false; return; }
-    suppressUntil.current = Date.now() + 4000;
-    saveKey("test-entries", entries).then(ok => setSyncError(!ok));
-  }, [entries, ready]);
-  useEffect(() => {
-    if (!ready) return;
-    if (remoteFlags.current.patient) { remoteFlags.current.patient = false; return; }
-    suppressUntil.current = Date.now() + 4000;
-    saveKey("patient-info", patient).then(ok => setSyncError(!ok));
-  }, [patient, ready]);
-  useEffect(() => {
-    if (!ready) return;
-    if (remoteFlags.current.cardOrder) { remoteFlags.current.cardOrder = false; return; }
-    suppressUntil.current = Date.now() + 4000;
-    saveKey("summary-card-order", cardOrder).then(ok => setSyncError(!ok));
-  }, [cardOrder, ready]);
-  useEffect(() => {
-    if (!ready) return;
-    if (remoteFlags.current.supportMessages) { remoteFlags.current.supportMessages = false; return; }
-    suppressUntil.current = Date.now() + 4000;
-    saveKey("support-messages", supportMessages).then(ok => setSyncError(!ok));
-  }, [supportMessages, ready]);
-  useEffect(() => {
-    if (!ready) return;
-    if (remoteFlags.current.tabOrder) { remoteFlags.current.tabOrder = false; return; }
-    suppressUntil.current = Date.now() + 4000;
-    saveKey("tab-order", tabOrder).then(ok => setSyncError(!ok));
-  }, [tabOrder, ready]);
+  // ----- Not signed in yet -----
+  if (!authChecked || (session && !membershipChecked)) {
+    return <FullScreenMessage message="Loading…" />;
+  }
+  if (!session) {
+    return <AuthScreen inviteToken={inviteToken} inviteError={inviteError} />;
+  }
+  if (!membership) {
+    return <CreateHouseholdScreen inviteError={inviteError} onCreated={setMembership} />;
+  }
 
   if (!splashDone || !ready) {
     return (
@@ -510,17 +568,33 @@ export default function App() {
   function importAllData(bundle) {
     setTreatments(Array.isArray(bundle.treatments) ? bundle.treatments : []);
     setAppointments(Array.isArray(bundle.appointments) ? bundle.appointments : []);
-    // Older backups may still have a "categories" list and extra entries keys
-    // from before Bloods/Measurements had their own tabs — fold those in too.
     setEntries(migrateLegacyTestData(bundle.categories, bundle.entries));
     setPatient(bundle.patient && typeof bundle.patient === "object" ? { ...DEFAULT_PATIENT, ...bundle.patient } : DEFAULT_PATIENT);
     setCardOrder(Array.isArray(bundle.cardOrder) && bundle.cardOrder.length === DEFAULT_CARD_ORDER.length ? bundle.cardOrder : DEFAULT_CARD_ORDER);
-    setSupportMessages(Array.isArray(bundle.supportMessages) ? bundle.supportMessages : []);
     setTabOrder(
       Array.isArray(bundle.tabOrder) && bundle.tabOrder.length === DEFAULT_TAB_ORDER.length
         ? bundle.tabOrder.map(id => (id === "tests" ? "measurements" : id))
         : DEFAULT_TAB_ORDER
     );
+    // Support messages import as fresh rows rather than a local array, since
+    // they now live in their own table.
+    if (Array.isArray(bundle.supportMessages)) {
+      (async () => {
+        for (const m of bundle.supportMessages) {
+          await addSupportMessage({ name: m.name || "", date: m.date, message: m.message });
+        }
+        setSupportMessages(await listSupportMessages());
+      })();
+    }
+  }
+
+  async function handleAddSupportMessage(entry) {
+    await addSupportMessage(entry);
+    setSupportMessages(await listSupportMessages());
+  }
+  async function handleDeleteSupportMessage(id) {
+    await deleteSupportMessage(id);
+    setSupportMessages(await listSupportMessages());
   }
 
   return (
@@ -533,18 +607,28 @@ export default function App() {
       <Header
         mainTab={mainTab} setMainTab={setMainTab} treatments={treatments} possessive={possessive}
         lastSynced={lastSynced} syncing={syncing} syncError={syncError}
-        onRefresh={() => (syncError ? forceSaveAll() : refreshRef.current())}
+        onRefresh={() => (syncError ? forceSaveAll() : refreshAllRef.current())}
         tabOrder={tabOrder} setTabOrder={setTabOrder}
+        householdName={membership.householdName} role={role} onSignOut={signOut}
       />
 
       <div className="tt-content">
+        {!canEdit && (
+          <div style={{
+            background: T.infoBg, border: `1px solid ${T.info}`, color: "#2C4172",
+            borderRadius: 10, padding: "10px 14px", fontSize: 12.5, marginBottom: 16,
+          }}>
+            You're viewing <strong>{membership.householdName}</strong> — you can see everything and add messages of
+            support, but only the owner or an editor can add or edit treatments, appointments, and results.
+          </div>
+        )}
         {isEmpty && mainTab !== "settings" && (
           <div style={{
             background: T.infoBg, border: `1px solid ${T.info}`, color: "#2C4172",
             borderRadius: 10, padding: "10px 14px", fontSize: 12.5, marginBottom: 16,
           }}>
-            There's no data here yet. Just start adding treatments, appointments and results below — everyone who
-            opens this link will see it too, or you can restore a backup from <strong>Settings → Backup, export &amp; sharing</strong>.
+            There's no data here yet. {canEdit ? "Just start adding treatments, appointments and results below, or restore a backup from " : "Ask the owner to start adding data, or check "}
+            <strong>Settings → Backup, export &amp; sharing</strong>{canEdit ? "." : " for more."}
           </div>
         )}
         {mainTab === "summary" && (
@@ -554,12 +638,142 @@ export default function App() {
             featuredMsg={featuredMsg} featuredSummary={featuredSummary}
           />
         )}
-        {mainTab === "calendar" && <CalendarTab treatments={treatments} setTreatments={setTreatments} view={calendarView} setView={setCalendarView} />}
-        {mainTab === "appointments" && <AppointmentsTab appointments={appointments} setAppointments={setAppointments} view={appointmentsView} setView={setAppointmentsView} />}
-        {mainTab === "support" && <SupportMessagesTab messages={supportMessages} setMessages={setSupportMessages} />}
-        {mainTab === "bloods" && <BloodsTab bloodsEntries={entries.Bloods || []} setBloodsEntries={(updater) => setEntries(prev => ({ ...prev, Bloods: typeof updater === "function" ? updater(prev.Bloods || []) : updater }))} />}
-        {mainTab === "measurements" && <MeasurementsTab measurementsEntries={entries.Measurements || []} setMeasurementsEntries={(updater) => setEntries(prev => ({ ...prev, Measurements: typeof updater === "function" ? updater(prev.Measurements || []) : updater }))} />}
-        {mainTab === "settings" && <SettingsTab patient={patient} setPatient={setPatient} exportBundle={exportBundle} onImportAll={importAllData} onBeforeImport={() => { suppressUntil.current = Date.now() + 4000; }} />}
+        {mainTab === "calendar" && <CalendarTab treatments={treatments} setTreatments={setTreatments} view={calendarView} setView={setCalendarView} canEdit={canEdit} />}
+        {mainTab === "appointments" && <AppointmentsTab appointments={appointments} setAppointments={setAppointments} view={appointmentsView} setView={setAppointmentsView} canEdit={canEdit} />}
+        {mainTab === "support" && <SupportMessagesTab messages={supportMessages} onAdd={handleAddSupportMessage} onDelete={handleDeleteSupportMessage} canDelete={canEdit} />}
+        {mainTab === "bloods" && <BloodsTab bloodsEntries={entries.Bloods || []} setBloodsEntries={(updater) => setEntries(prev => ({ ...prev, Bloods: typeof updater === "function" ? updater(prev.Bloods || []) : updater }))} canEdit={canEdit} />}
+        {mainTab === "measurements" && <MeasurementsTab measurementsEntries={entries.Measurements || []} setMeasurementsEntries={(updater) => setEntries(prev => ({ ...prev, Measurements: typeof updater === "function" ? updater(prev.Measurements || []) : updater }))} canEdit={canEdit} />}
+        {mainTab === "settings" && (
+          <SettingsTab
+            patient={patient} setPatient={setPatient} exportBundle={exportBundle} onImportAll={importAllData}
+            canEdit={canEdit} canManageHousehold={canManageHousehold}
+            householdId={householdId} householdName={membership.householdName}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FullScreenMessage({ message }) {
+  return (
+    <div className="tt-app tt-splash" style={{ fontFamily: T.ui, background: T.paper, color: T.accent }}>
+      <style>{GLOBAL_CSS}</style>
+      <div className="tt-splash-inner">{message}</div>
+    </div>
+  );
+}
+
+// ================= AUTH SCREENS =================
+function AuthScreen({ inviteToken, inviteError }) {
+  const [mode, setMode] = useState("signup");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
+
+  async function handleSubmit() {
+    setError(""); setInfo("");
+    if (!email.trim() || !password) { setError("Enter an email and password."); return; }
+    setBusy(true);
+    try {
+      if (mode === "signup") {
+        const { error: err } = await signUp(email.trim(), password);
+        if (err) throw err;
+        setInfo("Check your email to confirm your account, then come back and log in.");
+        setMode("login");
+      } else {
+        const { error: err } = await signIn(email.trim(), password);
+        if (err) throw err;
+      }
+    } catch (e) {
+      setError(e.message || "Something went wrong.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="tt-app tt-splash" style={{
+      fontFamily: T.ui, background: `linear-gradient(160deg, ${T.navy}, ${T.accentDeep})`, color: "#fff",
+      overflow: "hidden", border: `1px solid ${T.line}`,
+    }}>
+      <style>{GLOBAL_CSS}</style>
+      <div className="tt-splash-inner">
+        <Heart size={40} fill={T.accentBright} color={T.accentBright} />
+        <div style={{ fontSize: 22, fontWeight: 700 }}>Treatment Tracker</div>
+        {inviteToken && (
+          <div style={{ fontSize: 12.5, background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,.2)", borderRadius: 10, padding: "8px 14px", maxWidth: 320 }}>
+            You've been sent an invite link — sign up or log in below to join as a viewer.
+          </div>
+        )}
+        {inviteError && <div style={{ fontSize: 12.5, color: "#FBE4E7" }}>{inviteError}</div>}
+
+        <div style={{ background: "#fff", borderRadius: 14, padding: 22, width: 300, maxWidth: "100%", textAlign: "left", color: T.ink }}>
+          <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+            <button className="tt-btn" onClick={() => setMode("signup")} style={{
+              flex: 1, padding: "8px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+              background: mode === "signup" ? T.navy : T.lineSoft, color: mode === "signup" ? "#fff" : T.inkSoft,
+            }}>Sign up</button>
+            <button className="tt-btn" onClick={() => setMode("login")} style={{
+              flex: 1, padding: "8px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+              background: mode === "login" ? T.navy : T.lineSoft, color: mode === "login" ? "#fff" : T.inkSoft,
+            }}>Log in</button>
+          </div>
+          <Field label="Email"><input type="email" value={email} onChange={e => setEmail(e.target.value)} style={inputStyle} /></Field>
+          <Field label="Password"><input type="password" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} style={inputStyle} /></Field>
+          {error && <div style={{ fontSize: 12, color: T.breach, marginBottom: 10 }}>{error}</div>}
+          {info && <div style={{ fontSize: 12, color: T.ok, marginBottom: 10 }}>{info}</div>}
+          <button className="tt-btn" onClick={handleSubmit} disabled={busy} style={{ width: "100%", background: T.accent, color: "#fff", padding: "11px", borderRadius: 9, fontSize: 13.5, fontWeight: 600 }}>
+            {busy ? "Please wait…" : mode === "signup" ? "Create account" : "Log in"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreateHouseholdScreen({ inviteError, onCreated }) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleCreate() {
+    setBusy(true); setError("");
+    try {
+      const m = await createHousehold(name.trim() || "Our tracker");
+      onCreated(m);
+    } catch (e) {
+      setError(e.message || "Couldn't create that — please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="tt-app tt-splash" style={{
+      fontFamily: T.ui, background: `linear-gradient(160deg, ${T.navy}, ${T.accentDeep})`, color: "#fff",
+      overflow: "hidden", border: `1px solid ${T.line}`,
+    }}>
+      <style>{GLOBAL_CSS}</style>
+      <div className="tt-splash-inner">
+        <Heart size={40} fill={T.accentBright} color={T.accentBright} />
+        <div style={{ fontSize: 22, fontWeight: 700, textAlign: "center" }}>Let's set up your tracker</div>
+        {inviteError && (
+          <div style={{ fontSize: 12.5, color: "#FBE4E7", maxWidth: 320, textAlign: "center" }}>
+            {inviteError} If someone invited you, ask them to double-check the link and send it again.
+          </div>
+        )}
+        <div style={{ background: "#fff", borderRadius: 14, padding: 22, width: 300, maxWidth: "100%", textAlign: "left", color: T.ink }}>
+          <Field label="What should we call this? (optional)">
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Kate's Tracker" style={inputStyle} />
+          </Field>
+          {error && <div style={{ fontSize: 12, color: T.breach, marginBottom: 10 }}>{error}</div>}
+          <button className="tt-btn" onClick={handleCreate} disabled={busy} style={{ width: "100%", background: T.accent, color: "#fff", padding: "11px", borderRadius: 9, fontSize: 13.5, fontWeight: 600 }}>
+            {busy ? "Setting up…" : "Get started"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -576,7 +790,7 @@ const TAB_META = {
   settings: { icon: <SettingsIcon size={15} />, label: "Settings" },
 };
 
-function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, syncing, onRefresh, syncError, tabOrder, setTabOrder }) {
+function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, syncing, onRefresh, syncError, tabOrder, setTabOrder, householdName, role, onSignOut }) {
   const next = useMemo(() => {
     const today = todayStr();
     return treatments
@@ -617,6 +831,13 @@ function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, synci
         <div>
           <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: -0.2 }}>{titles[mainTab]}</div>
           <div style={{ fontSize: 12.5, color: "rgba(255,255,255,.66)", marginTop: 2 }}>{subs[mainTab]}</div>
+          {householdName && (
+            <div style={{ fontSize: 11, color: "rgba(255,255,255,.5)", marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+              <span>{householdName}</span>
+              <span style={{ background: "rgba(255,255,255,.1)", borderRadius: 4, padding: "1px 6px", fontWeight: 700, textTransform: "uppercase", fontSize: 9.5, letterSpacing: 0.4 }}>{role}</span>
+              <button className="tt-btn" onClick={onSignOut} style={{ background: "transparent", color: "rgba(255,255,255,.6)", fontSize: 11, textDecoration: "underline", padding: 0 }}>Log out</button>
+            </div>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {next && mainTab !== "settings" && (
@@ -955,7 +1176,7 @@ function MiniStat({ label, value }) {
 }
 
 // ================= CALENDAR TAB =================
-function CalendarTab({ treatments, setTreatments, view, setView }) {
+function CalendarTab({ treatments, setTreatments, view, setView, canEdit }) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
   const [formOpen, setFormOpen] = useState(false);
   const [formDate, setFormDate] = useState(todayStr());
@@ -974,6 +1195,7 @@ function CalendarTab({ treatments, setTreatments, view, setView }) {
   function deleteTreatment(id) { setTreatments(prev => prev.filter(t => t.id !== id)); setEditing(null); }
   function handleDrop(dateStr, e) {
     e.preventDefault(); setDragOverDate(null);
+    if (!canEdit) return;
     const id = e.dataTransfer.getData("text/plain");
     setTreatments(prev => prev.map(t => {
       if (t.id !== id || t.date === dateStr) return t;
@@ -1004,10 +1226,12 @@ function CalendarTab({ treatments, setTreatments, view, setView }) {
             <ViewToggleBtn active={view === "summary"} onClick={() => setView("summary")} icon={<List size={13} />} label="Summary" />
             <ViewToggleBtn active={view === "month"} onClick={() => setView("month")} icon={<Grid3x3 size={13} />} label="Calendar" />
           </div>
-          <button className="tt-btn" onClick={() => { setFormDate(todayStr()); setFormOpen(true); }}
-            style={{ background: T.accent, color: "#fff", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-            <Plus size={15} /> Add treatment
-          </button>
+          {canEdit && (
+            <button className="tt-btn" onClick={() => { setFormDate(todayStr()); setFormOpen(true); }}
+              style={{ background: T.accent, color: "#fff", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+              <Plus size={15} /> Add treatment
+            </button>
+          )}
         </div>
       </div>
 
@@ -1027,14 +1251,14 @@ function CalendarTab({ treatments, setTreatments, view, setView }) {
                 const dragging = dragOverDate === dateStr;
                 return (
                   <div key={i} className="tt-day-cell"
-                    onDragOver={(e) => { e.preventDefault(); setDragOverDate(dateStr); }}
+                    onDragOver={(e) => { if (canEdit) { e.preventDefault(); setDragOverDate(dateStr); } }}
                     onDragLeave={() => setDragOverDate(prev => (prev === dateStr ? null : prev))}
                     onDrop={(e) => handleDrop(dateStr, e)}
-                    onClick={() => { if (cell.inMonth) { setFormDate(dateStr); setFormOpen(true); } }}
+                    onClick={() => { if (canEdit && cell.inMonth) { setFormDate(dateStr); setFormOpen(true); } }}
                     style={{
                       background: cell.inMonth ? T.card : T.paper,
                       border: dragging ? `2px dashed ${T.accent}` : `1px solid ${T.lineSoft}`,
-                      borderRadius: 10, cursor: cell.inMonth ? "pointer" : "default", opacity: cell.inMonth ? 1 : 0.5,
+                      borderRadius: 10, cursor: cell.inMonth && canEdit ? "pointer" : "default", opacity: cell.inMonth ? 1 : 0.5,
                     }}>
                     <div style={{
                       fontSize: 12, fontWeight: isToday ? 700 : 500, color: isToday ? T.accentDeep : T.inkSoft,
@@ -1054,8 +1278,8 @@ function CalendarTab({ treatments, setTreatments, view, setView }) {
         <SummaryView treatments={treatments} onRowClick={setEditing} />
       )}
 
-      {formOpen && <AddTreatmentModal defaultDate={formDate} onClose={() => setFormOpen(false)} onSave={addTreatment} />}
-      {editing && <EditTreatmentModal t={editing} onClose={() => setEditing(null)} onSave={(patch) => { updateTreatment(editing.id, patch); setEditing(null); }} onDelete={() => deleteTreatment(editing.id)} />}
+      {formOpen && canEdit && <AddTreatmentModal defaultDate={formDate} onClose={() => setFormOpen(false)} onSave={addTreatment} />}
+      {editing && <EditTreatmentModal t={editing} canEdit={canEdit} onClose={() => setEditing(null)} onSave={(patch) => { updateTreatment(editing.id, patch); setEditing(null); }} onDelete={() => deleteTreatment(editing.id)} />}
     </div>
   );
 }
@@ -1238,7 +1462,7 @@ function AddTreatmentModal({ defaultDate, onClose, onSave }) {
   );
 }
 
-function EditTreatmentModal({ t, onClose, onSave, onDelete }) {
+function EditTreatmentModal({ t, onClose, onSave, onDelete, canEdit = true }) {
   const [status, setStatus] = useState(t.status);
   const [newDate, setNewDate] = useState(t.date);
   const [drugs, setDrugs] = useState(t.drugs || "");
@@ -1258,18 +1482,18 @@ function EditTreatmentModal({ t, onClose, onSave, onDelete }) {
   return (
     <ModalShell title={`${t.type === "Other" ? t.typeCustom : t.type} — ${fmtDate(t.date)}`} onClose={onClose}>
       <Field label="Status">
-        <select className="tt-select" value={status} onChange={e => setStatus(e.target.value)} style={inputStyle}>
+        <select className="tt-select" value={status} onChange={e => setStatus(e.target.value)} disabled={!canEdit} style={inputStyle}>
           <option>Scheduled</option><option>Completed</option><option>Skipped</option><option>Delayed</option>
         </select>
       </Field>
-      {status === "Delayed" && <Field label="New scheduled date"><input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} style={inputStyle} /></Field>}
+      {status === "Delayed" && <Field label="New scheduled date"><input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>}
       <div className="tt-2col">
-        <Field label="Cycle"><input value={cycle} onChange={e => setCycle(e.target.value)} style={inputStyle} /></Field>
-        <Field label="Day"><input value={day} onChange={e => setDay(e.target.value)} style={inputStyle} /></Field>
+        <Field label="Cycle"><input value={cycle} onChange={e => setCycle(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
+        <Field label="Day"><input value={day} onChange={e => setDay(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
       </div>
-      <Field label="Drug(s) / procedure detail"><input value={drugs} onChange={e => setDrugs(e.target.value)} style={inputStyle} /></Field>
-      <Field label="Dose (%, optional)"><input value={dose} onChange={e => setDose(e.target.value.replace(/[^0-9.]/g, ""))} style={inputStyle} /></Field>
-      <Field label="Notes"><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+      <Field label="Drug(s) / procedure detail"><input value={drugs} onChange={e => setDrugs(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
+      <Field label="Dose (%, optional)"><input value={dose} onChange={e => setDose(e.target.value.replace(/[^0-9.]/g, ""))} disabled={!canEdit} style={inputStyle} /></Field>
+      <Field label="Notes"><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} disabled={!canEdit} style={{ ...inputStyle, resize: "vertical" }} /></Field>
 
       {t.history && t.history.length > 0 && (
         <div style={{ marginBottom: 14 }}>
@@ -1280,18 +1504,22 @@ function EditTreatmentModal({ t, onClose, onSave, onDelete }) {
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-        <button className="tt-btn" onClick={handleSave} style={{ flex: 1, background: T.accent, color: "#fff", padding: "11px", borderRadius: 9, fontSize: 13.5, fontWeight: 600 }}>Save changes</button>
-        <button className="tt-btn" onClick={onDelete} style={{ background: T.breachBg, color: T.breach, padding: "11px 14px", borderRadius: 9, fontSize: 13.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-          <Trash2 size={14} /> Delete
-        </button>
-      </div>
+      {canEdit ? (
+        <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+          <button className="tt-btn" onClick={handleSave} style={{ flex: 1, background: T.accent, color: "#fff", padding: "11px", borderRadius: 9, fontSize: 13.5, fontWeight: 600 }}>Save changes</button>
+          <button className="tt-btn" onClick={onDelete} style={{ background: T.breachBg, color: T.breach, padding: "11px 14px", borderRadius: 9, fontSize: 13.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+            <Trash2 size={14} /> Delete
+          </button>
+        </div>
+      ) : (
+        <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 6 }}>You're viewing this as a viewer — only the owner can make changes.</div>
+      )}
     </ModalShell>
   );
 }
 
 // ================= BLOODS TAB =================
-function BloodsTab({ bloodsEntries, setBloodsEntries }) {
+function BloodsTab({ bloodsEntries, setBloodsEntries, canEdit = true }) {
   const [sub, setSub] = useState("chart"); // chart | haematology | biochemistry | Other
   const [selectedElement, setSelectedElement] = useState(HAEMATOLOGY_KEYS[0]);
 
@@ -1355,6 +1583,7 @@ function BloodsTab({ bloodsEntries, setBloodsEntries }) {
           entries={otherEntries}
           onAdd={addEntry}
           onDelete={deleteEntry}
+          canEdit={canEdit}
         />
       )}
       {(sub === "haematology" || sub === "biochemistry") && (
@@ -1364,17 +1593,26 @@ function BloodsTab({ bloodsEntries, setBloodsEntries }) {
           entries={bloodsEntries.filter(e => e.description === selectedElement)}
           onAdd={addEntry}
           onDelete={deleteEntry}
+          canEdit={canEdit}
         />
       )}
     </div>
   );
 }
 
-function BloodElementPanel({ elementName, meta, isOther, entries, onAdd, onDelete }) {
+function BloodElementPanel({ elementName, meta, isOther, entries, onAdd, onDelete, canEdit = true }) {
   const [date, setDate] = useState(todayStr());
   const [description, setDescription] = useState("");
   const [score, setScore] = useState("");
   const [unit, setUnit] = useState(meta ? meta.unit : "");
+
+  // Re-sync the unit (and clear the score) whenever the element being added
+  // for changes, so the correct unit is always pre-filled rather than
+  // carrying over whatever was left from the previously selected element.
+  useEffect(() => {
+    setUnit(meta ? meta.unit : "");
+    setScore("");
+  }, [elementName]); // eslint-disable-line
 
   const sorted = useMemo(() => [...entries].sort((a, b) => b.date.localeCompare(a.date)), [entries]);
   const knownDescriptions = useMemo(() => Array.from(new Set(entries.map(e => e.description))), [entries]);
@@ -1389,6 +1627,7 @@ function BloodElementPanel({ elementName, meta, isOther, entries, onAdd, onDelet
 
   return (
     <div>
+      {canEdit && (
       <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4, color: T.accentDeep }}>
           {isOther ? "Add another blood result" : `Add a ${elementName} result`}
@@ -1408,6 +1647,7 @@ function BloodElementPanel({ elementName, meta, isOther, entries, onAdd, onDelet
           <button className="tt-btn" onClick={handleAdd} style={{ background: T.accent, color: "#fff", borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>Add</button>
         </div>
       </div>
+      )}
 
       <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12 }}>
         <table style={{ borderCollapse: "collapse", fontSize: 13 }}>
@@ -1419,7 +1659,7 @@ function BloodElementPanel({ elementName, meta, isOther, entries, onAdd, onDelet
                 <td style={{ ...tdStyle, fontFamily: T.mono }}>{fmtDate(e.date)}</td>
                 {isOther && <td style={tdStyle}>{e.description}</td>}
                 <td style={{ ...tdStyle, fontFamily: T.mono }}>{e.score}{e.unit ? ` ${e.unit}` : ""}</td>
-                <td style={{ ...tdStyle, textAlign: "right" }}><button className="tt-btn" onClick={() => onDelete(e.id)} style={{ background: "transparent", color: T.breach, padding: 4 }}><Trash2 size={14} /></button></td>
+                <td style={{ ...tdStyle, textAlign: "right" }}>{canEdit && <button className="tt-btn" onClick={() => onDelete(e.id)} style={{ background: "transparent", color: T.breach, padding: 4 }}><Trash2 size={14} /></button>}</td>
               </tr>
             ))}
           </tbody>
@@ -1434,42 +1674,39 @@ function BloodsChartPanel({ bloodsEntries }) {
     () => Array.from(new Set(bloodsEntries.filter(e => !isNaN(parseFloat(e.score))).map(e => e.description))),
     [bloodsEntries]
   );
-  const chartData = useMemo(() => buildChartData(bloodsEntries), [bloodsEntries]);
 
-  // Default to nothing selected — the user picks what they want to see.
-  const [selected, setSelected] = useState({});
-  function toggle(name) { setSelected(prev => ({ ...prev, [name]: !prev[name] })); }
-  const visibleSeries = seriesNames.filter(n => selected[n]);
-  const singleSelected = visibleSeries.length === 1 ? visibleSeries[0] : null;
-  const singleNormal = singleSelected ? BLOOD_NORMALS[singleSelected] : null;
+  // Nothing selected by default — the user picks one measurement to view.
+  const [selectedMetric, setSelectedMetric] = useState("");
+  const normal = selectedMetric ? BLOOD_NORMALS[selectedMetric] : null;
+
+  // Scoped to just this metric's own entries, sorted oldest-to-newest — so the
+  // x-axis naturally starts at that metric's earliest recorded date rather
+  // than the earliest date across every measurement in Bloods.
+  const chartData = useMemo(() => {
+    if (!selectedMetric) return [];
+    return bloodsEntries
+      .filter(e => e.description === selectedMetric && !isNaN(parseFloat(e.score)))
+      .map(e => ({ date: e.date, [selectedMetric]: parseFloat(e.score) }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [bloodsEntries, selectedMetric]);
 
   if (seriesNames.length === 0) {
-    return <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>No results recorded yet — add some from the element tabs above.</div>;
+    return <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>No results recorded yet — add some from the Haematology or Biochemistry tabs above.</div>;
   }
 
   return (
     <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}><TrendingUp size={15} /> Trend over time</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
-        {seriesNames.map((name, i) => {
-          const on = !!selected[name];
-          const color = LINE_COLORS[i % LINE_COLORS.length];
-          return (
-            <label key={name} onClick={() => toggle(name)} style={{
-              display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none",
-              padding: "5px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-              background: on ? `${color}1A` : T.lineSoft, color: on ? T.ink : T.inkSoft,
-              border: `1px solid ${on ? color : T.line}`,
-            }}>
-              <span style={{ width: 10, height: 10, borderRadius: 3, display: "inline-block", background: on ? color : "transparent", border: `1.5px solid ${on ? color : T.inkSoft}` }} />
-              {name}
-            </label>
-          );
-        })}
+      <div style={{ marginBottom: 16, maxWidth: 320 }}>
+        <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Measurement</div>
+        <select className="tt-select" value={selectedMetric} onChange={e => setSelectedMetric(e.target.value)} style={inputStyle}>
+          <option value="">Select a measurement…</option>
+          {seriesNames.map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
       </div>
 
-      {visibleSeries.length === 0 ? (
-        <div style={{ padding: "30px 0", textAlign: "center", color: T.inkSoft, fontSize: 13 }}>Select one or more elements above to see their trend.</div>
+      {!selectedMetric ? (
+        <div style={{ padding: "30px 0", textAlign: "center", color: T.inkSoft, fontSize: 13 }}>Choose a measurement above to see its trend.</div>
       ) : (
         <>
           <ResponsiveContainer width="100%" height={280}>
@@ -1479,20 +1716,18 @@ function BloodsChartPanel({ bloodsEntries }) {
               <YAxis tick={{ fontSize: 11, fill: T.inkSoft }} />
               <Tooltip labelFormatter={fmtDate} contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.line}` }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              {singleNormal && (
+              {normal && (
                 <ReferenceLine
-                  y={singleNormal.normal} stroke={T.inkSoft} strokeDasharray="5 4"
+                  y={normal.normal} stroke={T.inkSoft} strokeDasharray="5 4"
                   label={{ value: "Typical normal", position: "insideTopRight", fill: T.inkSoft, fontSize: 11 }}
                 />
               )}
-              {seriesNames.map((name, i) => visibleSeries.includes(name) && (
-                <Line key={name} type="monotone" dataKey={name} stroke={LINE_COLORS[i % LINE_COLORS.length]} connectNulls dot={{ r: 3 }} strokeWidth={2} name={name} />
-              ))}
+              <Line type="monotone" dataKey={selectedMetric} stroke={LINE_COLORS[0]} connectNulls dot={{ r: 3 }} strokeWidth={2} name={selectedMetric} />
             </LineChart>
           </ResponsiveContainer>
-          {singleNormal && (
+          {normal && (
             <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 10 }}>
-              Dashed line shows a typical normal reference value for {singleSelected} ({singleNormal.range}). Reference
+              Dashed line shows a typical normal reference value for {selectedMetric} ({normal.range}). Reference
               ranges vary by lab, age and sex — always check the range printed on the actual lab report.
             </div>
           )}
@@ -1503,7 +1738,7 @@ function BloodsChartPanel({ bloodsEntries }) {
 }
 
 // ================= MEASUREMENTS TAB =================
-function MeasurementsTab({ measurementsEntries, setMeasurementsEntries }) {
+function MeasurementsTab({ measurementsEntries, setMeasurementsEntries, canEdit = true }) {
   const [sub, setSub] = useState("chart");
 
   function addEntry(entry) { setMeasurementsEntries(prev => [...prev, { id: uid(), ...entry }]); }
@@ -1524,32 +1759,40 @@ function MeasurementsTab({ measurementsEntries, setMeasurementsEntries }) {
           border: `1px solid ${sub === "entry" ? T.navy : T.line}`, borderRadius: 20, padding: "8px 16px",
           fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6,
         }}>
-          <Plus size={13} /> Add Measurement
+          {canEdit ? <><Plus size={13} /> Add Measurement</> : "History"}
         </button>
       </div>
 
       {sub === "chart" && <MeasurementsChartPanel entries={measurementsEntries} />}
-      {sub === "entry" && <MeasurementsEntryPanel entries={measurementsEntries} onAdd={addEntry} onDelete={deleteEntry} />}
+      {sub === "entry" && <MeasurementsEntryPanel entries={measurementsEntries} onAdd={addEntry} onDelete={deleteEntry} canEdit={canEdit} />}
     </div>
   );
 }
 
-function MeasurementsEntryPanel({ entries, onAdd, onDelete }) {
+function MeasurementsEntryPanel({ entries, onAdd, onDelete, canEdit = true }) {
   const [date, setDate] = useState(todayStr());
   const [scanType, setScanType] = useState(SCAN_TYPES[0]);
   const [score, setScore] = useState("");
-  const [unit, setUnit] = useState("");
+  const [unit, setUnit] = useState(SCAN_UNITS[SCAN_TYPES[0]] || "");
+
+  // Re-sync the unit (and clear the score) whenever the scan type changes,
+  // so the correct unit is always pre-filled.
+  useEffect(() => {
+    setUnit(SCAN_UNITS[scanType] || "");
+    setScore("");
+  }, [scanType]);
 
   const sorted = useMemo(() => [...entries].sort((a, b) => b.date.localeCompare(a.date)), [entries]);
 
   function handleAdd() {
     if (!scanType || !date) return;
     onAdd({ date, description: scanType, score: score.trim(), unit: unit.trim() });
-    setScore(""); setUnit("");
+    setScore(""); setUnit(SCAN_UNITS[scanType] || "");
   }
 
   return (
     <div>
+      {canEdit && (
       <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep }}>Add a measurement</div>
         <div className="tt-add-form">
@@ -1565,6 +1808,7 @@ function MeasurementsEntryPanel({ entries, onAdd, onDelete }) {
           <button className="tt-btn" onClick={handleAdd} style={{ background: T.accent, color: "#fff", borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap" }}>Add</button>
         </div>
       </div>
+      )}
 
       <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12 }}>
         <table style={{ borderCollapse: "collapse", fontSize: 13 }}>
@@ -1576,7 +1820,7 @@ function MeasurementsEntryPanel({ entries, onAdd, onDelete }) {
                 <td style={{ ...tdStyle, fontFamily: T.mono }}>{fmtDate(e.date)}</td>
                 <td style={tdStyle}>{e.description}</td>
                 <td style={{ ...tdStyle, fontFamily: T.mono }}>{e.score}{e.unit ? ` ${e.unit}` : ""}</td>
-                <td style={{ ...tdStyle, textAlign: "right" }}><button className="tt-btn" onClick={() => onDelete(e.id)} style={{ background: "transparent", color: T.breach, padding: 4 }}><Trash2 size={14} /></button></td>
+                <td style={{ ...tdStyle, textAlign: "right" }}>{canEdit && <button className="tt-btn" onClick={() => onDelete(e.id)} style={{ background: "transparent", color: T.breach, padding: 4 }}><Trash2 size={14} /></button>}</td>
               </tr>
             ))}
           </tbody>
@@ -1591,12 +1835,20 @@ function MeasurementsChartPanel({ entries }) {
     () => Array.from(new Set(entries.filter(e => !isNaN(parseFloat(e.score))).map(e => e.description))),
     [entries]
   );
-  const chartData = useMemo(() => buildChartData(entries), [entries]);
 
-  // Default to nothing selected — the user picks what they want to see.
-  const [selected, setSelected] = useState({});
-  function toggle(name) { setSelected(prev => ({ ...prev, [name]: !prev[name] })); }
-  const visibleSeries = seriesNames.filter(n => selected[n]);
+  // Nothing selected by default — the user picks one scan type to view.
+  const [selectedMetric, setSelectedMetric] = useState("");
+
+  // Scoped to just this scan type's own entries, sorted oldest-to-newest — so
+  // the x-axis naturally starts at its earliest recorded date rather than the
+  // earliest date across every scan type.
+  const chartData = useMemo(() => {
+    if (!selectedMetric) return [];
+    return entries
+      .filter(e => e.description === selectedMetric && !isNaN(parseFloat(e.score)))
+      .map(e => ({ date: e.date, [selectedMetric]: parseFloat(e.score) }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [entries, selectedMetric]);
 
   if (seriesNames.length === 0) {
     return <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>No measurements recorded yet — add some from the Add Measurement tab above.</div>;
@@ -1605,26 +1857,16 @@ function MeasurementsChartPanel({ entries }) {
   return (
     <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}><TrendingUp size={15} /> Trend over time</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
-        {seriesNames.map((name, i) => {
-          const on = !!selected[name];
-          const color = LINE_COLORS[i % LINE_COLORS.length];
-          return (
-            <label key={name} onClick={() => toggle(name)} style={{
-              display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none",
-              padding: "5px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-              background: on ? `${color}1A` : T.lineSoft, color: on ? T.ink : T.inkSoft,
-              border: `1px solid ${on ? color : T.line}`,
-            }}>
-              <span style={{ width: 10, height: 10, borderRadius: 3, display: "inline-block", background: on ? color : "transparent", border: `1.5px solid ${on ? color : T.inkSoft}` }} />
-              {name}
-            </label>
-          );
-        })}
+      <div style={{ marginBottom: 16, maxWidth: 320 }}>
+        <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Scan type</div>
+        <select className="tt-select" value={selectedMetric} onChange={e => setSelectedMetric(e.target.value)} style={inputStyle}>
+          <option value="">Select a scan type…</option>
+          {seriesNames.map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
       </div>
 
-      {visibleSeries.length === 0 ? (
-        <div style={{ padding: "30px 0", textAlign: "center", color: T.inkSoft, fontSize: 13 }}>Select one or more scan types above to see their trend.</div>
+      {!selectedMetric ? (
+        <div style={{ padding: "30px 0", textAlign: "center", color: T.inkSoft, fontSize: 13 }}>Choose a scan type above to see its trend.</div>
       ) : (
         <ResponsiveContainer width="100%" height={280}>
           <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
@@ -1633,9 +1875,7 @@ function MeasurementsChartPanel({ entries }) {
             <YAxis tick={{ fontSize: 11, fill: T.inkSoft }} />
             <Tooltip labelFormatter={fmtDate} contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.line}` }} />
             <Legend wrapperStyle={{ fontSize: 12 }} />
-            {seriesNames.map((name, i) => visibleSeries.includes(name) && (
-              <Line key={name} type="monotone" dataKey={name} stroke={LINE_COLORS[i % LINE_COLORS.length]} connectNulls dot={{ r: 3 }} strokeWidth={2} name={name} />
-            ))}
+            <Line type="monotone" dataKey={selectedMetric} stroke={LINE_COLORS[0]} connectNulls dot={{ r: 3 }} strokeWidth={2} name={selectedMetric} />
           </LineChart>
         </ResponsiveContainer>
       )}
@@ -1645,19 +1885,8 @@ function MeasurementsChartPanel({ entries }) {
 const thStyle = { padding: "9px 14px", fontSize: 11, fontWeight: 700, color: T.inkSoft, textTransform: "uppercase", letterSpacing: 0.3 };
 const tdStyle = { padding: "9px 14px", color: T.ink };
 
-function buildChartData(catEntries) {
-  const byDate = {};
-  catEntries.forEach(e => {
-    const v = parseFloat(e.score);
-    if (isNaN(v)) return;
-    byDate[e.date] = byDate[e.date] || { date: e.date };
-    byDate[e.date][e.description] = v;
-  });
-  return Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date));
-}
-
 // ================= APPOINTMENTS TAB =================
-function AppointmentsTab({ appointments, setAppointments, view, setView }) {
+function AppointmentsTab({ appointments, setAppointments, view, setView, canEdit = true }) {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
   const [formOpen, setFormOpen] = useState(false);
   const [formDate, setFormDate] = useState(todayStr());
@@ -1684,6 +1913,7 @@ function AppointmentsTab({ appointments, setAppointments, view, setView }) {
   function deleteAppointment(id) { setAppointments(prev => prev.filter(a => a.id !== id)); setEditing(null); }
   function handleDrop(dateStr, e) {
     e.preventDefault(); setDragOverDate(null);
+    if (!canEdit) return;
     const id = e.dataTransfer.getData("text/plain");
     setAppointments(prev => prev.map(a => {
       if (a.id !== id || a.date === dateStr) return a;
@@ -1713,10 +1943,12 @@ function AppointmentsTab({ appointments, setAppointments, view, setView }) {
             <ViewToggleBtn active={view === "summary"} onClick={() => setView("summary")} icon={<NotebookText size={13} />} label="Summary" />
             <ViewToggleBtn active={view === "month"} onClick={() => setView("month")} icon={<Grid3x3 size={13} />} label="Calendar" />
           </div>
-          <button className="tt-btn" onClick={() => { setFormDate(todayStr()); setFormOpen(true); }}
-            style={{ background: T.accent, color: "#fff", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-            <Plus size={15} /> Add appointment
-          </button>
+          {canEdit && (
+            <button className="tt-btn" onClick={() => { setFormDate(todayStr()); setFormOpen(true); }}
+              style={{ background: T.accent, color: "#fff", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+              <Plus size={15} /> Add appointment
+            </button>
+          )}
         </div>
       </div>
 
@@ -1736,14 +1968,14 @@ function AppointmentsTab({ appointments, setAppointments, view, setView }) {
                 const dragging = dragOverDate === dateStr;
                 return (
                   <div key={i} className="tt-day-cell"
-                    onDragOver={(e) => { e.preventDefault(); setDragOverDate(dateStr); }}
+                    onDragOver={(e) => { if (canEdit) { e.preventDefault(); setDragOverDate(dateStr); } }}
                     onDragLeave={() => setDragOverDate(prev => (prev === dateStr ? null : prev))}
                     onDrop={(e) => handleDrop(dateStr, e)}
-                    onClick={() => { if (cell.inMonth) { setFormDate(dateStr); setFormOpen(true); } }}
+                    onClick={() => { if (canEdit && cell.inMonth) { setFormDate(dateStr); setFormOpen(true); } }}
                     style={{
                       background: cell.inMonth ? T.card : T.paper,
                       border: dragging ? `2px dashed ${T.accent}` : `1px solid ${T.lineSoft}`,
-                      borderRadius: 10, cursor: cell.inMonth ? "pointer" : "default", opacity: cell.inMonth ? 1 : 0.5,
+                      borderRadius: 10, cursor: cell.inMonth && canEdit ? "pointer" : "default", opacity: cell.inMonth ? 1 : 0.5,
                     }}>
                     <div style={{
                       fontSize: 12, fontWeight: isToday ? 700 : 500, color: isToday ? T.accentDeep : T.inkSoft,
@@ -1770,8 +2002,8 @@ function AppointmentsTab({ appointments, setAppointments, view, setView }) {
         <AppointmentNotesSummary appointments={appointments} onUpdate={updateAppointment} onRowClick={setEditing} />
       )}
 
-      {formOpen && <AddAppointmentModal defaultDate={formDate} onClose={() => setFormOpen(false)} onSave={addAppointment} />}
-      {editing && <EditAppointmentModal a={editing} onClose={() => setEditing(null)} onSave={(patch) => { updateAppointment(editing.id, patch); setEditing(null); }} onDelete={() => deleteAppointment(editing.id)} />}
+      {formOpen && canEdit && <AddAppointmentModal defaultDate={formDate} onClose={() => setFormOpen(false)} onSave={addAppointment} />}
+      {editing && <EditAppointmentModal a={editing} canEdit={canEdit} onClose={() => setEditing(null)} onSave={(patch) => { updateAppointment(editing.id, patch); setEditing(null); }} onDelete={() => deleteAppointment(editing.id)} />}
     </div>
   );
 }
@@ -1870,7 +2102,7 @@ function AddAppointmentModal({ defaultDate, onClose, onSave }) {
   );
 }
 
-function EditAppointmentModal({ a, onClose, onSave, onDelete }) {
+function EditAppointmentModal({ a, onClose, onSave, onDelete, canEdit = true }) {
   const [name, setName] = useState(a.name || "");
   const [role, setRole] = useState(a.role || "Consultant");
   const [notes, setNotes] = useState(a.notes || "");
@@ -1890,14 +2122,14 @@ function EditAppointmentModal({ a, onClose, onSave, onDelete }) {
 
   return (
     <ModalShell title={`${apptTitle(a)} — ${fmtDate(a.date)}`} onClose={onClose}>
-      <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} /></Field>
-      <Field label="Name"><input value={name} onChange={e => setName(e.target.value)} style={inputStyle} /></Field>
+      <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
+      <Field label="Name"><input value={name} onChange={e => setName(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
       <Field label="Job role">
-        <select className="tt-select" value={role} onChange={e => setRole(e.target.value)} style={inputStyle}>
+        <select className="tt-select" value={role} onChange={e => setRole(e.target.value)} disabled={!canEdit} style={inputStyle}>
           {APPT_ROLES.map(r => <option key={r}>{r}</option>)}
         </select>
       </Field>
-      <Field label="Notes from appointment"><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={4} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+      <Field label="Notes from appointment"><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={4} disabled={!canEdit} style={{ ...inputStyle, resize: "vertical" }} /></Field>
 
       {a.history && a.history.length > 0 && (
         <div style={{ marginBottom: 14 }}>
@@ -1908,6 +2140,8 @@ function EditAppointmentModal({ a, onClose, onSave, onDelete }) {
         </div>
       )}
 
+      {!canEdit && <div style={{ fontSize: 11.5, color: T.inkSoft, marginBottom: 6 }}>You're viewing this as a viewer — only the owner can make changes.</div>}
+      {canEdit && (
       <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
         <button className="tt-btn" onClick={handleSave} disabled={summarising} style={{ flex: 1, background: T.accent, color: "#fff", padding: "11px", borderRadius: 9, fontSize: 13.5, fontWeight: 600 }}>
           {summarising ? "Summarising notes…" : "Save changes"}
@@ -1916,24 +2150,31 @@ function EditAppointmentModal({ a, onClose, onSave, onDelete }) {
           <Trash2 size={14} /> Delete
         </button>
       </div>
+      )}
     </ModalShell>
   );
 }
 
 // ================= SUPPORT MESSAGES TAB =================
-function SupportMessagesTab({ messages, setMessages }) {
+function SupportMessagesTab({ messages, onAdd, onDelete, canDelete }) {
   const [name, setName] = useState("");
   const [date, setDate] = useState(todayStr());
   const [text, setText] = useState("");
   const [expandedId, setExpandedId] = useState(null);
+  const [saving, setSaving] = useState(false);
 
-  function addMessage() {
-    if (!text.trim()) return;
-    setMessages(prev => [...prev, { id: uid(), name: name.trim(), date, message: text.trim() }]);
-    setText(""); setName(""); setDate(todayStr());
+  async function addMessage() {
+    if (!text.trim() || saving) return;
+    setSaving(true);
+    try {
+      await onAdd({ name: name.trim(), date, message: text.trim() });
+      setText(""); setName(""); setDate(todayStr());
+    } finally {
+      setSaving(false);
+    }
   }
   function deleteMessage(id) {
-    setMessages(prev => prev.filter(m => m.id !== id));
+    onDelete(id);
     setExpandedId(prev => (prev === id ? null : prev));
   }
 
@@ -1950,8 +2191,8 @@ function SupportMessagesTab({ messages, setMessages }) {
           <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} /></Field>
         </div>
         <Field label="Message"><textarea value={text} onChange={e => setText(e.target.value)} rows={3} placeholder="Write a message of support…" style={{ ...inputStyle, resize: "vertical" }} /></Field>
-        <button className="tt-btn" onClick={addMessage} style={{ background: T.accent, color: "#fff", borderRadius: 9, padding: "10px 18px", fontSize: 13, fontWeight: 600 }}>
-          Add message
+        <button className="tt-btn" onClick={addMessage} disabled={saving} style={{ background: T.accent, color: "#fff", borderRadius: 9, padding: "10px 18px", fontSize: 13, fontWeight: 600 }}>
+          {saving ? "Adding…" : "Add message"}
         </button>
       </div>
 
@@ -1989,9 +2230,11 @@ function SupportMessagesTab({ messages, setMessages }) {
                 {expanded && (
                   <div style={{ padding: "0 14px 14px 39px" }}>
                     <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{m.message}</div>
-                    <button className="tt-btn" onClick={() => deleteMessage(m.id)} style={{ marginTop: 10, background: "transparent", color: T.breach, fontSize: 11.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 5, padding: "4px 0" }}>
-                      <Trash2 size={12} /> Delete
-                    </button>
+                    {canDelete && (
+                      <button className="tt-btn" onClick={() => deleteMessage(m.id)} style={{ marginTop: 10, background: "transparent", color: T.breach, fontSize: 11.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 5, padding: "4px 0" }}>
+                        <Trash2 size={12} /> Delete
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -2004,7 +2247,7 @@ function SupportMessagesTab({ messages, setMessages }) {
 }
 
 // ================= SETTINGS TAB =================
-function SettingsTab({ patient, setPatient, exportBundle, onImportAll, onBeforeImport }) {
+function SettingsTab({ patient, setPatient, exportBundle, onImportAll, canEdit, canManageHousehold, householdId, householdName }) {
   const [form, setForm] = useState(patient);
   const [saved, setSaved] = useState(false);
   useEffect(() => setForm(patient), [patient]);
@@ -2024,26 +2267,145 @@ function SettingsTab({ patient, setPatient, exportBundle, onImportAll, onBeforeI
 
       <div className="tt-settings-card" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
         <div className="tt-2col">
-          <Field label="Full name"><input value={form.name} onChange={e => set("name", e.target.value)} placeholder="e.g. Kate Smith" style={inputStyle} /></Field>
-          <Field label="Date of birth"><input type="date" value={form.dob} onChange={e => set("dob", e.target.value)} style={inputStyle} /></Field>
+          <Field label="Full name"><input value={form.name} onChange={e => set("name", e.target.value)} disabled={!canEdit} placeholder="e.g. Kate Smith" style={inputStyle} /></Field>
+          <Field label="Date of birth"><input type="date" value={form.dob} onChange={e => set("dob", e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
         </div>
-        <Field label="Address"><textarea value={form.address} onChange={e => set("address", e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+        <Field label="Address"><textarea value={form.address} onChange={e => set("address", e.target.value)} rows={2} disabled={!canEdit} style={{ ...inputStyle, resize: "vertical" }} /></Field>
         <div className="tt-2col">
-          <Field label="Height"><input value={form.height} onChange={e => set("height", e.target.value)} placeholder="e.g. 165 cm" style={inputStyle} /></Field>
-          <Field label="Weight"><input value={form.weight} onChange={e => set("weight", e.target.value)} placeholder="e.g. 62 kg" style={inputStyle} /></Field>
+          <Field label="Height"><input value={form.height} onChange={e => set("height", e.target.value)} disabled={!canEdit} placeholder="e.g. 165 cm" style={inputStyle} /></Field>
+          <Field label="Weight"><input value={form.weight} onChange={e => set("weight", e.target.value)} disabled={!canEdit} placeholder="e.g. 62 kg" style={inputStyle} /></Field>
         </div>
 
-        <button className="tt-btn" onClick={handleSave} style={{ background: T.accent, color: "#fff", padding: "11px 20px", borderRadius: 9, fontSize: 13.5, fontWeight: 600, marginTop: 4 }}>
-          {saved ? "Saved ✓" : "Save patient details"}
-        </button>
+        {canEdit && (
+          <button className="tt-btn" onClick={handleSave} style={{ background: T.accent, color: "#fff", padding: "11px 20px", borderRadius: 9, fontSize: 13.5, fontWeight: 600, marginTop: 4 }}>
+            {saved ? "Saved ✓" : "Save patient details"}
+          </button>
+        )}
       </div>
 
-      <BackupSection exportBundle={exportBundle} onImportAll={onImportAll} onBeforeImport={onBeforeImport} />
+      <HouseholdSection householdId={householdId} householdName={householdName} canManageHousehold={canManageHousehold} />
+
+      {canManageHousehold && <BackupSection exportBundle={exportBundle} onImportAll={onImportAll} />}
     </div>
   );
 }
 
-function BackupSection({ exportBundle, onImportAll, onBeforeImport }) {
+function HouseholdSection({ householdId, householdName, canManageHousehold }) {
+  const [invites, setInvitesState] = useState([]);
+  const [members, setMembersState] = useState([]);
+  const [creating, setCreating] = useState(false);
+  const [copiedToken, setCopiedToken] = useState(null);
+  const [inviteRole, setInviteRole] = useState("viewer");
+
+  async function refresh() {
+    if (!householdId) return;
+    const [inv, mem] = await Promise.all([listInvites(householdId), listMembers(householdId)]);
+    setInvitesState(inv);
+    setMembersState(mem);
+  }
+  useEffect(() => { if (canManageHousehold) refresh(); }, [householdId, canManageHousehold]); // eslint-disable-line
+
+  async function handleCreateInvite() {
+    setCreating(true);
+    try {
+      await createInvite(householdId, inviteRole);
+      await refresh();
+    } finally {
+      setCreating(false);
+    }
+  }
+  async function handleRevoke(token) {
+    await revokeInvite(token);
+    await refresh();
+  }
+  function copyLink(token) {
+    const url = `${window.location.origin}${window.location.pathname}?invite=${token}`;
+    navigator.clipboard?.writeText(url);
+    setCopiedToken(token);
+    setTimeout(() => setCopiedToken(null), 1500);
+  }
+
+  if (!canManageHousehold) {
+    return (
+      <div className="tt-settings-card" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: T.accentDeep, marginBottom: 4 }}>Household</div>
+        <div style={{ fontSize: 12, color: T.inkSoft }}>You're on <strong style={{ color: T.ink }}>{householdName}</strong>. Only the owner or an admin can manage invites.</div>
+      </div>
+    );
+  }
+
+  const activeInvites = invites.filter(i => !i.revoked && new Date(i.expires_at) > new Date());
+  const roleLabel = { owner: "Owner", admin: "Admin", editor: "Editor", viewer: "Viewer" };
+
+  return (
+    <div className="tt-settings-card" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: T.accentDeep, marginBottom: 4 }}>Household &amp; invites</div>
+      <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 16 }}>
+        Invite friends or family to <strong style={{ color: T.ink }}>{householdName}</strong>. Choose how much access
+        they should have.
+      </div>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 16 }}>
+        <div style={{ minWidth: 260 }}>
+          <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.3 }}>Access level</div>
+          <select className="tt-select" value={inviteRole} onChange={e => setInviteRole(e.target.value)} style={inputStyle}>
+            <option value="viewer">Viewer — can view + add support messages</option>
+            <option value="editor">Editor — can view and edit everything</option>
+            <option value="admin">Admin — edit everything, plus manage invites &amp; household</option>
+          </select>
+        </div>
+        <button className="tt-btn" onClick={handleCreateInvite} disabled={creating}
+          style={{ background: T.accent, color: "#fff", borderRadius: 9, padding: "10px 18px", fontSize: 13, fontWeight: 600 }}>
+          {creating ? "Creating…" : "Create invite link"}
+        </button>
+      </div>
+
+      {activeInvites.length > 0 && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: T.inkSoft, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 }}>Active invite links</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {activeInvites.map(inv => (
+              <div key={inv.token} style={{ display: "flex", alignItems: "center", gap: 8, border: `1px solid ${T.lineSoft}`, borderRadius: 8, padding: "8px 10px" }}>
+                <span style={{
+                  background: inv.role === "admin" ? T.infoBg : inv.role === "editor" ? T.accentSoft : T.lineSoft,
+                  color: inv.role === "admin" ? T.info : inv.role === "editor" ? T.accentDeep : T.inkSoft,
+                  borderRadius: 5, padding: "2px 8px", fontSize: 11, fontWeight: 700,
+                }}>
+                  {roleLabel[inv.role] || inv.role}
+                </span>
+                <div style={{ flex: 1, fontSize: 11.5, color: T.inkSoft, fontFamily: T.mono, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  Expires {fmtDate(inv.expires_at.slice(0, 10))}
+                </div>
+                <button className="tt-btn" onClick={() => copyLink(inv.token)} style={{ background: T.lineSoft, color: T.ink, borderRadius: 7, padding: "6px 10px", fontSize: 11.5, fontWeight: 600 }}>
+                  {copiedToken === inv.token ? "Copied ✓" : "Copy link"}
+                </button>
+                <button className="tt-btn" onClick={() => handleRevoke(inv.token)} style={{ background: "transparent", color: T.breach, borderRadius: 7, padding: "6px 8px", fontSize: 11.5, fontWeight: 600 }}>
+                  Revoke
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {members.length > 0 && (
+        <div>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: T.inkSoft, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 }}>Members</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {members.map(m => (
+              <div key={m.user_id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: T.ink }}>
+                <span>{m.role === "owner" ? "You (owner)" : roleLabel[m.role] || m.role}</span>
+                <span style={{ color: T.inkSoft, fontFamily: T.mono }}>{fmtDate(m.joined_at.slice(0, 10))}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BackupSection({ exportBundle, onImportAll }) {
   const [exportPass, setExportPass] = useState("");
   const [exportBusy, setExportBusy] = useState(false);
   const [exportMsg, setExportMsg] = useState("");
@@ -2090,7 +2452,6 @@ function BackupSection({ exportBundle, onImportAll, onBeforeImport }) {
         "This will replace all data currently in this app (treatments, appointments, test results, patient details) with the contents of the backup file. This can't be undone. Continue?"
       );
       if (!ok) { setImportBusy(false); return; }
-      if (onBeforeImport) onBeforeImport();
       onImportAll(bundle);
       setImportMsg(`Import complete — data from ${envelope.exportedAt ? fmtDate(envelope.exportedAt.slice(0, 10)) : "the backup"} has been loaded.`);
       setImportFile(null);
