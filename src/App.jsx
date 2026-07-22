@@ -6,7 +6,7 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Trash2, FlaskConical, CalendarDays,
   Clock3, RotateCcw, TrendingUp, Settings as SettingsIcon, List, Grid3x3, User,
   LayoutDashboard, CalendarCheck2, CalendarClock, Layers, GripVertical,
-  Stethoscope, NotebookText, RefreshCw, Heart, ChevronDown, ChevronUp, Droplet, Ruler,
+  Stethoscope, NotebookText, RefreshCw, Heart, ChevronDown, ChevronUp, Droplet, Ruler, Home, BookOpen,
 } from "lucide-react";
 import {
   loadKey, saveKey, getSession, onAuthChange, signUp, signIn, signOut,
@@ -57,7 +57,7 @@ const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const LINE_COLORS = [T.accent, T.info, T.warn, T.breach, T.navy, T.accentDeep, "#7A4E08"];
 const DEFAULT_CARD_ORDER = ["next", "nextAppointment", "completed", "remaining", "phaseEnd", "nextType", "supportMessages"];
-const DEFAULT_TAB_ORDER = ["summary", "calendar", "appointments", "bloods", "measurements", "support", "settings"];
+const DEFAULT_TAB_ORDER = ["contents", "summary", "calendar", "appointments", "bloods", "measurements", "support", "guidance", "settings"];
 
 // A standard pre-chemotherapy blood panel, split into Haematology (FBC) and
 // Biochemistry (U&E/LFT/bone profile). "Normal" values here are illustrative
@@ -641,7 +641,7 @@ export default function App() {
             support, but only the owner or an editor can add or edit treatments, appointments, and results.
           </div>
         )}
-        {isEmpty && mainTab !== "settings" && (
+        {isEmpty && !["settings", "contents", "guidance"].includes(mainTab) && (
           <div style={{
             background: T.infoBg, border: `1px solid ${T.info}`, color: "#2C4172",
             borderRadius: 10, padding: "10px 14px", fontSize: 12.5, marginBottom: 16,
@@ -650,6 +650,7 @@ export default function App() {
             <strong>Settings → Backup, export &amp; sharing</strong>{canEdit ? "." : " for more."}
           </div>
         )}
+        {mainTab === "contents" && <ContentsTab onNavigate={goTo} possessive={possessive} />}
         {mainTab === "summary" && (
           <SummaryDashboardTab
             treatments={treatments} appointments={appointments} cardOrder={cardOrder} setCardOrder={setCardOrder}
@@ -662,6 +663,7 @@ export default function App() {
         {mainTab === "support" && <SupportMessagesTab messages={supportMessages} onAdd={handleAddSupportMessage} onDelete={handleDeleteSupportMessage} canDelete={canEdit} />}
         {mainTab === "bloods" && <BloodsTab bloodsEntries={entries.Bloods || []} setBloodsEntries={(updater) => setEntries(prev => ({ ...prev, Bloods: typeof updater === "function" ? updater(prev.Bloods || []) : updater }))} canEdit={canEdit} />}
         {mainTab === "measurements" && <MeasurementsTab measurementsEntries={entries.Measurements || []} setMeasurementsEntries={(updater) => setEntries(prev => ({ ...prev, Measurements: typeof updater === "function" ? updater(prev.Measurements || []) : updater }))} canEdit={canEdit} />}
+        {mainTab === "guidance" && <GuidanceTab />}
         {mainTab === "settings" && (
           <SettingsTab
             patient={patient} setPatient={setPatient} exportBundle={exportBundle} onImportAll={importAllData}
@@ -800,13 +802,25 @@ function CreateHouseholdScreen({ inviteError, onCreated }) {
 
 // ================= HEADER =================
 const TAB_META = {
+  contents: { icon: <Home size={15} />, label: "Contents" },
   summary: { icon: <LayoutDashboard size={15} />, label: "Summary" },
   calendar: { icon: <CalendarDays size={15} />, label: "Treatment Calendar" },
   appointments: { icon: <Stethoscope size={15} />, label: "Appointments" },
   bloods: { icon: <Droplet size={15} />, label: "Bloods" },
   support: { icon: <Heart size={15} />, label: "Support Messages" },
   measurements: { icon: <Ruler size={15} />, label: "Measurements" },
+  guidance: { icon: <BookOpen size={15} />, label: "Guidance" },
   settings: { icon: <SettingsIcon size={15} />, label: "Settings" },
+};
+const TAB_DESCRIPTIONS = {
+  summary: "A dashboard of key stats and messages of support — next treatment/appointment, progress so far, and more. Drag cards to reorder them.",
+  calendar: "Schedule and track chemotherapy, immunotherapy, surgery and radiotherapy sessions, with status tracking, cycle/day tracking, and drag-and-drop rescheduling.",
+  appointments: "Track consultant, registrar and surgical appointments, with notes that get automatically condensed into key takeaways.",
+  bloods: "Log haematology and biochemistry blood test results element by element, with trend charts shown against a typical normal range.",
+  measurements: "Log scan measurements (MRI, CT, mammogram, ultrasound) and see them charted over time.",
+  support: "Read and add messages of love and encouragement from friends and family — open to everyone, including viewers.",
+  guidance: "A full walkthrough of how to use the app, including roles, permissions, and how to add data.",
+  settings: "Manage patient details, household members and invites, and back up or restore your data.",
 };
 
 function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, syncing, onRefresh, syncError, tabOrder, setTabOrder, householdName, role, onSignOut }) {
@@ -818,21 +832,25 @@ function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, synci
   }, [treatments]);
 
   const titles = {
+    contents: "Contents",
     summary: possessive ? `${possessive} Summary` : "Summary",
     calendar: possessive ? `${possessive} Treatment Tracker` : "Treatment Tracker",
     appointments: possessive ? `${possessive} Appointments` : "Appointments",
     bloods: possessive ? `${possessive} Bloods` : "Bloods",
     support: "Support Messages",
     measurements: possessive ? `${possessive} Measurements` : "Measurements",
+    guidance: "Guidance",
     settings: "Settings",
   };
   const subs = {
+    contents: "What's in this app, and where to find it",
     summary: "Progress at a glance",
     calendar: "Care plan, appointments and rescheduling",
     appointments: "Consultant, registrar and surgical appointments",
     bloods: "Blood test results over time, element by element",
     support: "Messages of love and encouragement",
     measurements: "Scan measurements and results over time",
+    guidance: "How to use this app",
     settings: "Patient details and app preferences",
   };
 
@@ -939,6 +957,48 @@ function DraggableTab({ id, active, meta, onClick, onReorder }) {
       style={{ borderRadius: "10px 10px 0 0", boxShadow: isOver ? `inset 0 -3px 0 ${T.accentBright}` : "none" }}
     >
       <TabButton active={active} onClick={onClick} icon={meta.icon} label={meta.label} />
+    </div>
+  );
+}
+
+// ================= CONTENTS TAB =================
+function ContentsTab({ onNavigate, possessive }) {
+  const order = ["summary", "calendar", "appointments", "bloods", "measurements", "support", "guidance", "settings"];
+  return (
+    <div>
+      <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: T.ink, marginBottom: 8 }}>What this app is for</div>
+        <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.65 }}>
+          {possessive ? `${possessive} Treatment Tracker` : "This app"} is a shared place to record and follow a
+          cancer treatment journey — the treatment calendar, appointments, blood and scan results, and messages of
+          support — so that the people who need to see it always have the latest picture, in one place, kept up to
+          date automatically for everyone.
+        </div>
+      </div>
+
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: T.inkSoft, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 10 }}>
+        Jump to a section
+      </div>
+      <div className="tt-summary-grid">
+        {order.map(id => {
+          const meta = TAB_META[id];
+          if (!meta) return null;
+          return (
+            <div
+              key={id}
+              onClick={() => onNavigate(id)}
+              style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16, cursor: "pointer" }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.accentDeep, fontWeight: 700, fontSize: 13.5 }}>
+                {meta.icon}{meta.label}
+              </div>
+              <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 8, lineHeight: 1.5 }}>
+                {TAB_DESCRIPTIONS[id]}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -2261,6 +2321,145 @@ function SupportMessagesTab({ messages, onAdd, onDelete, canDelete }) {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// ================= GUIDANCE TAB =================
+function GuidanceSection({ title, children }) {
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: T.accentDeep, marginBottom: 12 }}>{title}</div>
+      <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.7 }}>{children}</div>
+    </div>
+  );
+}
+function RoleRow({ name, accentColor, children }) {
+  return (
+    <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+      <span style={{
+        flexShrink: 0, background: `${accentColor}1A`, color: accentColor, border: `1px solid ${accentColor}`,
+        borderRadius: 6, padding: "2px 10px", fontSize: 12, fontWeight: 700, height: "fit-content", whiteSpace: "nowrap",
+      }}>{name}</span>
+      <div style={{ fontSize: 13, color: T.ink, lineHeight: 1.55 }}>{children}</div>
+    </div>
+  );
+}
+
+function GuidanceTab() {
+  return (
+    <div>
+      <GuidanceSection title="How this app works">
+        This app is a shared record of a cancer treatment journey. Whoever creates it (the <strong>owner</strong>) adds
+        the treatment plan, appointments, and results, and can invite others to join — either with full editing
+        rights, or as a viewer who can look but not touch (aside from adding a message of support). Everyone sees
+        the same live data, updated instantly as changes are made.
+      </GuidanceSection>
+
+      <GuidanceSection title="User roles">
+        <RoleRow name="Owner" accentColor={T.navy}>
+          Full access to everything, and the only one who manages invites and the household itself. The original
+          creator — can't be removed.
+        </RoleRow>
+        <RoleRow name="Admin" accentColor={T.info}>
+          The same as the owner, including managing invites and the household — just not the original creator.
+        </RoleRow>
+        <RoleRow name="Editor" accentColor={T.accent}>
+          Can add, edit, and delete treatments, appointments, blood results, measurements, and patient details —
+          same data access as the owner — but can't manage invites or the household.
+        </RoleRow>
+        <RoleRow name="Viewer" accentColor={T.inkSoft}>
+          Can see everything and add messages of support, but can't change any treatment, appointment, or result data.
+        </RoleRow>
+        <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6 }}>
+          An owner or admin can invite someone at any of these levels from <strong>Settings → Household &amp; invites</strong>{" "}
+          — choose an access level, create a link, and send it however you like.
+        </div>
+      </GuidanceSection>
+
+      <GuidanceSection title="Adding data, tab by tab (Owner, Admin &amp; Editor)">
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <div>
+            <div style={{ fontWeight: 700, color: T.ink, marginBottom: 6 }}>Treatment Calendar</div>
+            <ol style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 4 }}>
+              <li>Make sure you're on the Calendar view (toggle at the top).</li>
+              <li>Tap the date you want, or tap "Add treatment".</li>
+              <li>Choose the type (Chemotherapy, Immunotherapy, Surgery, or Radiotherapy), and fill in drug(s), dose, cycle and day as needed.</li>
+              <li>Save — it'll appear as a chip on that date.</li>
+            </ol>
+            <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6 }}>
+              To reschedule, drag a chip onto a new date — it's marked "Delayed" automatically. Tap a chip to update
+              its status (Scheduled/Completed/Skipped/Delayed) or edit its details. Switch to Summary view for a
+              plain list of everything, past and future.
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 700, color: T.ink, marginBottom: 6 }}>Appointments</div>
+            <ol style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 4 }}>
+              <li>On the Calendar view, tap the date of the appointment, or tap "Add appointment".</li>
+              <li>Enter who it's with and their role (Consultant, Registrar, Surgeon, or Other).</li>
+              <li>Add any notes from the appointment — these get automatically condensed into a few key bullet points.</li>
+              <li>Save — it'll appear as a chip on that date, same as the Treatment Calendar.</li>
+            </ol>
+            <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6 }}>
+              Drag a chip to reschedule it. Switch to Summary view to read through past notes.
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 700, color: T.ink, marginBottom: 6 }}>Bloods</div>
+            <ol style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 4 }}>
+              <li>Choose the Haematology or Biochemistry tab (or "Other" if it doesn't fit either).</li>
+              <li>Pick the specific element you have a result for (e.g. Haemoglobin, Sodium).</li>
+              <li>Enter the date and the result — the correct unit fills in automatically.</li>
+              <li>Save — it's added to that element's history.</li>
+            </ol>
+            <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6 }}>
+              Use the Chart tab and pick one element from the dropdown to see its trend over time, shown against a
+              typical normal range for reference.
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 700, color: T.ink, marginBottom: 6 }}>Measurements</div>
+            <ol style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 4 }}>
+              <li>Go to the "Add Measurement" tab.</li>
+              <li>Enter the date, the scan type (MRI, CT, Mammogram, or Ultrasound), and the value.</li>
+              <li>Save — it's added to that scan type's history.</li>
+            </ol>
+            <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6 }}>
+              Use the Chart tab and pick one scan type from the dropdown to see its trend over time.
+            </div>
+          </div>
+
+          <div>
+            <strong>Support Messages</strong> — anyone, including viewers, can add a message here. Only an owner,
+            admin, or editor can delete one.
+          </div>
+          <div>
+            <strong>Settings → Patient Data</strong> — name, date of birth, address, height and weight, shown
+            throughout the app.
+          </div>
+        </div>
+      </GuidanceSection>
+
+      <GuidanceSection title="Importing and exporting data">
+        Owners and admins will find this under <strong>Settings → Backup, export &amp; sharing</strong>:
+        <ul style={{ margin: "10px 0 0", paddingLeft: 20 }}>
+          <li style={{ marginBottom: 8 }}>
+            <strong>Export</strong> bundles everything (treatments, appointments, results, patient details) into a
+            single file, encrypted with a passphrase you choose. Useful as an offline backup, or to hand someone a
+            fresh copy of the data. The file is safe to send by email or messaging apps — without the passphrase,
+            it's unreadable. Send the passphrase a different way (e.g. a text message, not the same email).
+          </li>
+          <li>
+            <strong>Import</strong> decrypts a backup file and loads it in, replacing what's currently there for
+            everyone. Messages of support are the exception — they're added alongside existing ones rather than
+            replacing them.
+          </li>
+        </ul>
+      </GuidanceSection>
     </div>
   );
 }
