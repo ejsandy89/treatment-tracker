@@ -184,3 +184,51 @@ $$;
 -- Lets the app get instant updates instead of having to poll.
 alter publication supabase_realtime add table app_data;
 alter publication supabase_realtime add table support_messages;
+
+-- ---------- Push notifications ----------
+-- One row per device that's enabled notifications; per-person on/off
+-- preferences; and a small table tracking which appointment/treatment
+-- reminders have already been sent (so a scheduled job doesn't repeat one).
+create table if not exists push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  household_id uuid not null references households(id) on delete cascade,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists push_subscriptions_household_idx on push_subscriptions(household_id);
+create index if not exists push_subscriptions_user_idx on push_subscriptions(user_id);
+
+create table if not exists notification_prefs (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  household_id uuid not null references households(id) on delete cascade,
+  new_data_enabled boolean not null default true,
+  reminders_enabled boolean not null default true,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, household_id)
+);
+
+create table if not exists sent_reminders (
+  household_id uuid not null references households(id) on delete cascade,
+  item_id text not null,
+  sent_at timestamptz not null default now(),
+  primary key (household_id, item_id)
+);
+
+alter table push_subscriptions enable row level security;
+alter table notification_prefs enable row level security;
+alter table sent_reminders enable row level security;
+
+create policy "user manages their own push subscriptions" on push_subscriptions
+  for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+create policy "user manages their own notification prefs" on notification_prefs
+  for all using (user_id = auth.uid() and household_role(household_id) is not null)
+  with check (user_id = auth.uid() and household_role(household_id) is not null);
+
+-- Only the scheduled reminder function (via the service-role key, which
+-- bypasses RLS) ever touches this table — no direct client access.
+create policy "no direct client access to sent_reminders" on sent_reminders
+  for all using (false) with check (false);

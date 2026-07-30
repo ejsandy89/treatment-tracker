@@ -6,40 +6,93 @@ import {
   ChevronLeft, ChevronRight, Plus, X, Trash2, FlaskConical, CalendarDays,
   Clock3, RotateCcw, TrendingUp, Settings as SettingsIcon, List, Grid3x3, User,
   LayoutDashboard, CalendarCheck2, CalendarClock, Layers, GripVertical,
-  Stethoscope, NotebookText, RefreshCw, Heart, ChevronDown, ChevronUp, Droplet, Ruler, Home, BookOpen,
+  Stethoscope, NotebookText, RefreshCw, Heart, ChevronDown, ChevronUp, Droplet, Ruler, Home, BookOpen, Pill, Apple,
+  Sparkles, ArrowUp, ArrowDown, AlertTriangle, Phone, Sun, Moon,
 } from "lucide-react";
 import {
   loadKey, saveKey, getSession, onAuthChange, signUp, signIn, signOut,
   getMyMembership, createHousehold, redeemInvite, createInvite, listInvites, revokeInvite, listMembers,
   setActiveHousehold, listSupportMessages, addSupportMessage, deleteSupportMessage, subscribeToHousehold,
+  getPushPermissionState, getExistingPushSubscription, subscribeToPush, unsubscribeFromPush,
+  getNotificationPrefs, setNotificationPrefs, notifyHousehold,
 } from "./lib/db.js";
 import { encryptPayload, decryptPayload } from "./lib/crypto.js";
 
-// ---------- brand tokens (Student Roost) ----------
-const T = {
-  paper: "#F6F7F8", card: "#FFFFFF", ink: "#2D3746", inkSoft: "#626A75",
-  line: "#E5E7EB", lineSoft: "#EEF0F2",
-  navy: "#2E3746", accent: "#0E7E6E", accentDeep: "#0A6359",
-  accentSoft: "#E3F7F3", accentBright: "#91E5DB",
+// ---------- brand tokens (CareTrack) ----------
+// T, TYPE_STYLES, STATUS_META, ROLE_STYLES and LINE_COLORS are deliberately
+// mutated in place (via Object.assign) rather than replaced, whenever the
+// theme mode changes — see applyThemeMode() below. Every component reads
+// these directly from module scope during render, so mutating the same
+// object/array reference means the whole app picks up new colours the
+// moment React next renders, without threading a theme value through props
+// or context everywhere.
+const LIGHT_THEME = {
+  paper: "#F5F1E9", card: "#FFFFFF", ink: "#233937", inkSoft: "#63706F",
+  line: "#E6DFD1", lineSoft: "#EFE9DD",
+  navy: "#0F2B2A", accent: "#1E5C57", accentDeep: "#16403F",
+  accentSoft: "#E7EFEE", accentBright: "#E8734A",
   ok: "#198560", okBg: "#E4F4EE", warn: "#A9670B", warnBg: "#FBF1DF",
   breach: "#C8102E", breachBg: "#FBE4E7", info: "#3A5BA0", infoBg: "#E9EEF8",
-  radius: 12, shadow: "0 1px 2px rgba(45,55,70,.06),0 4px 16px rgba(45,55,70,.06)",
+  infoText: "#2C4172", warnText: "#7A4E08", radioBg: "#EAEEEC",
+  shadow: "0 1px 2px rgba(45,55,70,.06),0 4px 16px rgba(45,55,70,.06)",
+};
+const DARK_THEME = {
+  paper: "#0B211F", card: "#123330", ink: "#EDEDE6", inkSoft: "#9FB0AE",
+  line: "#1E4340", lineSoft: "#193A37",
+  navy: "#0A1E1D", accent: "#2E7A72", accentDeep: "#16403F",
+  accentSoft: "#1A3F3B", accentBright: "#F0906B",
+  ok: "#5FCFA0", okBg: "#123A2C", warn: "#F0B054", warnBg: "#3D2E10",
+  breach: "#F0798A", breachBg: "#3D151B", info: "#7FAEEA", infoBg: "#152A42",
+  infoText: "#7FAEEA", warnText: "#F0B054", radioBg: "#183633",
+  shadow: "0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.35)",
+};
+const T = {
+  ...LIGHT_THEME,
+  radius: 12,
   ui: "'Poppins','Inter',system-ui,sans-serif", mono: "'Roboto Mono',ui-monospace,Menlo,monospace",
 };
 
-const TYPE_STYLES = {
-  Chemotherapy: { bg: T.accentSoft, border: T.accent, text: T.accentDeep },
-  Immunotherapy: { bg: T.infoBg, border: T.info, text: "#2C4172" },
-  Surgery: { bg: T.warnBg, border: T.warn, text: "#7A4E08" },
-  Radiotherapy: { bg: "#EDF0F3", border: T.navy, text: T.navy },
-  Other: { bg: T.lineSoft, border: T.inkSoft, text: T.inkSoft },
-};
-const STATUS_META = {
-  Scheduled: { label: "Scheduled", color: T.info, bg: T.infoBg },
-  Completed: { label: "Completed", color: T.ok, bg: T.okBg },
-  Skipped: { label: "Skipped", color: T.breach, bg: T.breachBg },
-  Delayed: { label: "Delayed", color: T.warn, bg: T.warnBg },
-};
+const THEME_STORAGE_KEY = "tt-theme-mode";
+function getStoredThemeMode() {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    return stored === "dark" ? "dark" : "light";
+  } catch {
+    return "light";
+  }
+}
+
+function buildTypeStyles() {
+  return {
+    Chemotherapy: { bg: T.accentSoft, border: T.accent, text: T.accentDeep },
+    Immunotherapy: { bg: T.infoBg, border: T.info, text: T.infoText },
+    Surgery: { bg: T.warnBg, border: T.warn, text: T.warnText },
+    Radiotherapy: { bg: T.radioBg, border: T.navy, text: T.ink },
+    Other: { bg: T.lineSoft, border: T.inkSoft, text: T.inkSoft },
+  };
+}
+function buildStatusMeta() {
+  return {
+    Scheduled: { label: "Scheduled", color: T.info, bg: T.infoBg },
+    Completed: { label: "Completed", color: T.ok, bg: T.okBg },
+    Skipped: { label: "Skipped", color: T.breach, bg: T.breachBg },
+    Delayed: { label: "Delayed", color: T.warn, bg: T.warnBg },
+  };
+}
+function buildRoleStyles() {
+  return {
+    Consultant: { bg: T.infoBg, border: T.info, text: T.infoText },
+    Registrar: { bg: T.accentSoft, border: T.accent, text: T.accentDeep },
+    Surgeon: { bg: T.warnBg, border: T.warn, text: T.warnText },
+    Other: { bg: T.lineSoft, border: T.inkSoft, text: T.inkSoft },
+  };
+}
+function buildLineColors() {
+  return [T.accentBright, T.info, T.warn, T.breach, T.navy, T.accentDeep, T.warnText];
+}
+
+const TYPE_STYLES = buildTypeStyles();
+const STATUS_META = buildStatusMeta();
 const TREATMENT_TYPES = ["Chemotherapy", "Immunotherapy", "Surgery", "Radiotherapy", "Other"];
 const SCAN_TYPES = ["MRI", "Mammogram", "CT", "Ultrasound", "Other"];
 // Lesion/tumour measurements are conventionally recorded in millimetres
@@ -47,17 +100,62 @@ const SCAN_TYPES = ["MRI", "Mammogram", "CT", "Ultrasound", "Other"];
 // be set per scan type later if needed.
 const SCAN_UNITS = { MRI: "mm", Mammogram: "mm", CT: "mm", Ultrasound: "mm", Other: "mm" };
 const APPT_ROLES = ["Consultant", "Registrar", "Surgeon", "Other"];
-const ROLE_STYLES = {
-  Consultant: { bg: T.infoBg, border: T.info, text: "#2C4172" },
-  Registrar: { bg: T.accentSoft, border: T.accent, text: T.accentDeep },
-  Surgeon: { bg: T.warnBg, border: T.warn, text: "#7A4E08" },
-  Other: { bg: T.lineSoft, border: T.inkSoft, text: T.inkSoft },
-};
+const ROLE_STYLES = buildRoleStyles();
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-const LINE_COLORS = [T.accent, T.info, T.warn, T.breach, T.navy, T.accentDeep, "#7A4E08"];
+const LINE_COLORS = buildLineColors();
+
+// Called whenever the theme mode changes (see the toggle in Settings).
+// Mutates T and its derived style maps IN PLACE so every component picks up
+// the new colours on next render, then persists the choice for next visit.
+function applyThemeMode(mode) {
+  Object.assign(T, mode === "dark" ? DARK_THEME : LIGHT_THEME);
+  Object.assign(TYPE_STYLES, buildTypeStyles());
+  Object.assign(STATUS_META, buildStatusMeta());
+  Object.assign(ROLE_STYLES, buildRoleStyles());
+  buildLineColors().forEach((c, i) => { LINE_COLORS[i] = c; });
+  if (typeof inputStyle !== "undefined") Object.assign(inputStyle, buildInputStyle());
+  if (typeof thStyle !== "undefined") Object.assign(thStyle, buildThStyle());
+  if (typeof tdStyle !== "undefined") Object.assign(tdStyle, buildTdStyle());
+  try { localStorage.setItem(THEME_STORAGE_KEY, mode); } catch { /* ignore */ }
+  if (typeof document !== "undefined") {
+    document.body.style.background = T.paper;
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeColorMeta) themeColorMeta.setAttribute("content", T.navy);
+  }
+}
+
 const DEFAULT_CARD_ORDER = ["next", "nextAppointment", "completed", "remaining", "phaseEnd", "nextType", "supportMessages"];
-const DEFAULT_TAB_ORDER = ["contents", "summary", "calendar", "appointments", "bloods", "measurements", "support", "guidance", "settings"];
+const DEFAULT_TAB_ORDER = ["contents", "summary", "calendar", "appointments", "bloods", "measurements", "prescriptions", "sideeffects", "nutrition", "insights", "support", "guidance", "settings"];
+
+// ---------- CareTrack brand mark ----------
+// variant="light" for light backgrounds, variant="dark" for the app's own
+// dark-navy surfaces (header, splash screens) — the dark variant swaps in a
+// lighter arc/pulse colour pairing so it stays legible, per the brand kit.
+// Note: this is about which SURFACE the mark sits on, independent of the
+// overall light/dark theme mode below — the header stays dark-styled either way.
+function Logo({ variant = "light", withWordmark = true, size = 40 }) {
+  const isDark = variant === "dark";
+  const arcColor = isDark ? "#EDEDE6" : "#16403F";
+  const pulseColor = isDark ? "#F0906B" : "#E8734A";
+  const textColor = isDark ? "#F3EFE6" : "#16403F";
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <svg width={size} height={size} viewBox="0 0 72 72" fill="none" aria-hidden="true">
+        <path d="M58 20A24 24 0 1 0 58 52" stroke={arcColor} strokeWidth="4.5" strokeLinecap="round" fill="none" />
+        <path d="M14 36 L26 36 L31 24 L38 48 L43 36 L52 36" stroke={pulseColor} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        <circle cx="52" cy="36" r="5" fill={pulseColor} />
+      </svg>
+      {withWordmark && (
+        <span style={{ fontSize: size * 0.5, fontWeight: 700, letterSpacing: "-0.01em", color: textColor, fontFamily: T.ui }}>
+          Care<span style={{ color: pulseColor, fontWeight: 600 }}>Track</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
 
 // A standard pre-chemotherapy blood panel, split into Haematology (FBC) and
 // Biochemistry (U&E/LFT/bone profile). "Normal" values here are illustrative
@@ -97,6 +195,224 @@ const BLOOD_ELEMENT_KEYS = BLOOD_ELEMENTS.map(e => e.key);
 const BLOOD_NORMALS = Object.fromEntries(BLOOD_ELEMENTS.map(e => [e.key, e]));
 const HAEMATOLOGY_KEYS = HAEMATOLOGY_ELEMENTS.map(e => e.key);
 const BIOCHEMISTRY_KEYS = BIOCHEMISTRY_ELEMENTS.map(e => e.key);
+
+// General nutrition reference info, keyed to each blood element. This is
+// deliberately general public-health information (which foods commonly
+// contain which nutrients) rather than any kind of dietary prescription —
+// see the disclaimer shown in the Nutrition tab itself. Markers that mainly
+// reflect organ function rather than nutrient status (e.g. liver/kidney
+// markers) get a softer, more caveated note rather than a firm food list.
+const NUTRITION_INFO = {
+  "Haemoglobin": { nutrients: [
+    { name: "Iron", foods: "red meat, poultry, spinach, lentils, fortified cereals" },
+    { name: "Vitamin B12", foods: "meat, fish, eggs, dairy, fortified plant milks" },
+    { name: "Folate", foods: "leafy greens, beans, citrus fruit" },
+  ] },
+  "White Cell Count": { nutrients: [
+    { name: "Vitamin C", foods: "citrus fruit, peppers, broccoli" },
+    { name: "Zinc", foods: "meat, shellfish, pumpkin seeds" },
+    { name: "Protein", foods: "lean meat, fish, eggs, legumes" },
+  ] },
+  "Platelet Count": { nutrients: [
+    { name: "Vitamin K", foods: "leafy greens, broccoli, Brussels sprouts" },
+    { name: "Vitamin B12", foods: "meat, fish, eggs, dairy" },
+    { name: "Folate", foods: "leafy greens, beans, citrus fruit" },
+  ] },
+  "Red Blood Cell Count": { nutrients: [
+    { name: "Iron", foods: "red meat, poultry, spinach, lentils, fortified cereals" },
+    { name: "Vitamin B12", foods: "meat, fish, eggs, dairy" },
+    { name: "Folate", foods: "leafy greens, beans, citrus fruit" },
+    { name: "Copper", foods: "nuts, seeds, shellfish" },
+  ] },
+  "Haematocrit": { nutrients: [
+    { name: "Iron", foods: "red meat, poultry, spinach, lentils, fortified cereals" },
+    { name: "Vitamin B12", foods: "meat, fish, eggs, dairy" },
+    { name: "Folate", foods: "leafy greens, beans, citrus fruit" },
+  ] },
+  "Mean Cell Volume": {
+    note: "Low results are often linked to iron deficiency, high results to a lack of vitamin B12 or folate — worth discussing which applies with your care team.",
+    nutrients: [
+      { name: "Iron", foods: "red meat, poultry, spinach, lentils, fortified cereals" },
+      { name: "Vitamin B12", foods: "meat, fish, eggs, dairy" },
+      { name: "Folate", foods: "leafy greens, beans, citrus fruit" },
+    ],
+  },
+  "Mean Cell Haemoglobin": { nutrients: [
+    { name: "Iron", foods: "red meat, poultry, spinach, lentils, fortified cereals" },
+    { name: "Vitamin B12", foods: "meat, fish, eggs, dairy" },
+  ] },
+  "Neutrophils": { nutrients: [
+    { name: "Vitamin C", foods: "citrus fruit, peppers, broccoli" },
+    { name: "Zinc", foods: "meat, shellfish, pumpkin seeds" },
+    { name: "Protein", foods: "lean meat, fish, eggs, legumes" },
+  ] },
+  "Lymphocytes": { nutrients: [
+    { name: "Vitamin C", foods: "citrus fruit, peppers, broccoli" },
+    { name: "Vitamin D", foods: "oily fish, fortified milk, safe sun exposure" },
+    { name: "Zinc", foods: "meat, shellfish, pumpkin seeds" },
+  ] },
+  "Monocytes": { nutrients: [
+    { name: "Vitamin C", foods: "citrus fruit, peppers, broccoli" },
+    { name: "Zinc", foods: "meat, shellfish, pumpkin seeds" },
+    { name: "Protein", foods: "lean meat, fish, eggs, legumes" },
+  ] },
+  "Eosinophils": { nutrients: [
+    { name: "Vitamin D", foods: "oily fish, fortified milk, safe sun exposure" },
+    { name: "Omega-3 fatty acids", foods: "oily fish, flaxseed, walnuts" },
+  ] },
+  "Basophils": { nutrients: [
+    { name: "Vitamin C", foods: "citrus fruit, peppers, broccoli" },
+    { name: "Vitamin D", foods: "oily fish, fortified milk, safe sun exposure" },
+    { name: "Omega-3 fatty acids", foods: "oily fish, flaxseed, walnuts" },
+  ] },
+  "Sodium": {
+    note: "Sodium levels are mainly affected by fluid and salt intake rather than a nutrient deficiency — unusual results are best discussed directly with your care team.",
+    nutrients: [],
+  },
+  "Potassium": { nutrients: [
+    { name: "Potassium", foods: "bananas, potatoes (with skin), oranges, spinach, avocado" },
+  ] },
+  "Urea": {
+    note: "Reflects protein breakdown and kidney function rather than a specific nutrient. Hydration and protein intake are usually the relevant factors — check with your team before changing either.",
+    nutrients: [],
+  },
+  "Creatinine": {
+    note: "Reflects muscle metabolism and kidney function rather than a nutrient deficiency. Good hydration is usually the main dietary factor; avoid creatine supplements, and check with your team about protein intake.",
+    nutrients: [],
+  },
+  "Calcium": { nutrients: [
+    { name: "Calcium", foods: "dairy, fortified plant milks, leafy greens, almonds, tofu" },
+    { name: "Vitamin D (helps absorption)", foods: "oily fish, fortified foods, safe sun exposure" },
+  ] },
+  "Adjusted Calcium": { nutrients: [
+    { name: "Calcium", foods: "dairy, fortified plant milks, leafy greens, almonds, tofu" },
+    { name: "Vitamin D (helps absorption)", foods: "oily fish, fortified foods, safe sun exposure" },
+  ] },
+  "Magnesium": { nutrients: [
+    { name: "Magnesium", foods: "nuts, seeds, whole grains, leafy greens, dark chocolate" },
+  ] },
+  "Inorganic Phosphate": {
+    note: "Often linked to kidney function as well as diet — worth discussing with your team if this is outside range.",
+    nutrients: [{ name: "Phosphate", foods: "dairy, meat, fish, nuts, whole grains" }],
+  },
+  "Albumin": { nutrients: [
+    { name: "Protein", foods: "lean meat, fish, eggs, dairy, legumes" },
+  ] },
+  "Alanine Transaminase": {
+    note: "Mainly reflects liver function rather than a nutrient deficiency. Limiting alcohol, staying hydrated, and a balanced diet are generally supportive — always check with your team before taking supplements, as some can affect the liver or interact with treatment.",
+    nutrients: [],
+  },
+  "Alkaline Phosphatase": {
+    note: "Can reflect liver or bone activity. Calcium and vitamin D support bone health; general liver-friendly habits (limiting alcohol, staying hydrated) apply too.",
+    nutrients: [
+      { name: "Calcium", foods: "dairy, fortified plant milks, leafy greens, almonds" },
+      { name: "Vitamin D", foods: "oily fish, fortified foods, safe sun exposure" },
+    ],
+  },
+  "Total Bilirubin": {
+    note: "Mainly reflects liver function and red cell turnover rather than a nutrient deficiency. Staying hydrated and limiting alcohol are generally supportive — always check with your team.",
+    nutrients: [],
+  },
+};
+
+// General reference info on common side effects, matched against whatever
+// drugs/prescriptions the person has actually typed in elsewhere in the app.
+// Keys are lowercase for matching; values are plain-English side effect
+// lists drawn from widely available public patient-information sources
+// (e.g. the kind of leaflet that comes with a treatment) — general
+// education, not a clinical or exhaustive list. Matching is deliberately
+// forgiving (substring match either way) since people type dose details
+// alongside the drug name (e.g. "Carboplatin AUC5").
+const DRUG_SIDE_EFFECTS = {
+  "carboplatin": ["Fatigue", "Nausea and vomiting", "Low blood counts (anaemia, low platelets, low white cells)", "Hearing changes", "Kidney effects", "Hair thinning"],
+  "cisplatin": ["Nausea and vomiting", "Kidney effects", "Hearing changes or tinnitus", "Tingling or numbness in hands/feet", "Fatigue", "Low blood counts"],
+  "paclitaxel": ["Tingling or numbness in hands/feet (peripheral neuropathy)", "Hair loss", "Joint and muscle aches", "Low blood counts", "Possible allergic reaction during infusion"],
+  "docetaxel": ["Fluid retention", "Nail changes", "Fatigue", "Low blood counts", "Hair loss", "Mouth sores"],
+  "doxorubicin": ["Hair loss", "Nausea", "Mouth sores", "Low blood counts", "Red or orange-tinted urine (harmless)", "Possible heart effects with cumulative dose"],
+  "cyclophosphamide": ["Nausea", "Hair loss", "Low blood counts", "Bladder irritation — stay well hydrated", "Fatigue"],
+  "fluorouracil": ["Mouth sores", "Diarrhoea", "Sensitivity to sunlight", "Redness or soreness of palms and soles (hand-foot syndrome)", "Low blood counts"],
+  "5-fu": ["Mouth sores", "Diarrhoea", "Sensitivity to sunlight", "Redness or soreness of palms and soles (hand-foot syndrome)", "Low blood counts"],
+  "capecitabine": ["Redness or soreness of palms and soles (hand-foot syndrome)", "Diarrhoea", "Nausea", "Fatigue"],
+  "gemcitabine": ["Flu-like symptoms", "Fatigue", "Low blood counts", "Mild nausea", "Rash"],
+  "oxaliplatin": ["Cold-sensitive tingling in hands, feet or throat", "Fatigue", "Nausea", "Low blood counts"],
+  "vinorelbine": ["Constipation", "Low blood counts", "Fatigue", "Nerve tingling", "Hair thinning"],
+  "etoposide": ["Hair loss", "Low blood counts", "Nausea", "Fatigue"],
+  "methotrexate": ["Mouth sores", "Nausea", "Fatigue", "Low blood counts", "Liver effects"],
+  "pemetrexed": ["Fatigue", "Nausea", "Low blood counts", "Rash"],
+  "pembrolizumab": ["Fatigue", "Skin rash or itching", "Diarrhoea", "Flu-like symptoms", "Risk of inflammation in organs such as the thyroid, lungs, gut or liver — report any new symptom promptly"],
+  "nivolumab": ["Fatigue", "Skin rash or itching", "Diarrhoea", "Flu-like symptoms", "Risk of inflammation in organs such as the thyroid, lungs, gut or liver — report any new symptom promptly"],
+  "atezolizumab": ["Fatigue", "Skin rash or itching", "Diarrhoea", "Flu-like symptoms", "Risk of inflammation in organs such as the thyroid, lungs, gut or liver — report any new symptom promptly"],
+  "trastuzumab": ["Possible heart effects (monitored regularly)", "Infusion reactions", "Diarrhoea", "Fatigue"],
+  "rituximab": ["Infusion reactions", "Low blood counts", "Increased risk of infection"],
+  "filgrastim": ["Bone or muscle aches", "Fatigue", "Headache", "Injection site reactions"],
+  "dexamethasone": ["Increased appetite", "Difficulty sleeping", "Mood changes", "Increased blood sugar", "Fluid retention", "Indigestion"],
+  "prednisolone": ["Increased appetite", "Mood changes", "Difficulty sleeping", "Indigestion", "Increased blood sugar"],
+  "ondansetron": ["Headache", "Constipation", "Tiredness"],
+  "ciprofloxacin": ["Nausea", "Diarrhoea", "Tendon pain — report this promptly", "Increased sensitivity to sunlight"],
+};
+const GENERIC_SIDE_EFFECTS = {
+  Chemotherapy: ["Fatigue", "Nausea", "Hair loss or thinning", "Increased risk of infection (low white blood cells)", "Mouth sores"],
+  Immunotherapy: ["Fatigue", "Skin rash or itching", "Flu-like symptoms", "Diarrhoea", "Risk of inflammation in organs such as the thyroid, lungs, gut or liver — report any new symptom promptly"],
+  Radiotherapy: ["Fatigue", "Skin irritation or redness at the treatment site", "Effects specific to the treatment area — ask your team what to expect"],
+  Surgery: ["Pain or discomfort at the site", "Swelling or bruising", "Tiredness during recovery", "Risk of infection at the wound site"],
+  Other: ["Effects vary — ask your care team what to expect for this treatment"],
+};
+
+function matchDrugSideEffects(name) {
+  const key = (name || "").trim().toLowerCase();
+  if (!key) return null;
+  if (DRUG_SIDE_EFFECTS[key]) return DRUG_SIDE_EFFECTS[key];
+  const found = Object.keys(DRUG_SIDE_EFFECTS).find(k => key.includes(k) || k.includes(key));
+  return found ? DRUG_SIDE_EFFECTS[found] : null;
+}
+
+// Builds one card per distinct drug/prescription actually entered elsewhere
+// in the app — falling back to a generic per-treatment-type list only when
+// a specific drug name isn't recognised, so results only ever reflect what
+// the person has actually logged.
+function buildSideEffectGroups(treatments, prescriptions) {
+  const groups = [];
+  const seenSources = new Set();
+  const seenGenericTypes = new Set();
+
+  (treatments || []).forEach(t => {
+    if (t.status === "Skipped" || !t.type) return;
+    const typeLabel = t.type === "Other" ? (t.typeCustom || "Other") : t.type;
+    const drugNames = (t.drugs || "").split(",").map(s => s.trim()).filter(Boolean);
+
+    if (drugNames.length === 0) {
+      if (!seenGenericTypes.has(typeLabel)) {
+        seenGenericTypes.add(typeLabel);
+        groups.push({ source: typeLabel, sourceNote: "Treatment type", effects: GENERIC_SIDE_EFFECTS[t.type] || GENERIC_SIDE_EFFECTS.Other });
+      }
+      return;
+    }
+    drugNames.forEach(d => {
+      const key = d.toLowerCase();
+      if (seenSources.has(key)) return;
+      seenSources.add(key);
+      const matched = matchDrugSideEffects(d);
+      if (matched) {
+        groups.push({ source: d, sourceNote: typeLabel, effects: matched });
+      } else if (!seenGenericTypes.has(typeLabel)) {
+        seenGenericTypes.add(typeLabel);
+        groups.push({ source: typeLabel, sourceNote: "Treatment type (drug not recognised)", effects: GENERIC_SIDE_EFFECTS[t.type] || GENERIC_SIDE_EFFECTS.Other });
+      }
+    });
+  });
+
+  (prescriptions || []).forEach(rx => {
+    if (!rx.name) return;
+    const key = rx.name.trim().toLowerCase();
+    if (seenSources.has(key)) return;
+    seenSources.add(key);
+    const matched = matchDrugSideEffects(rx.name);
+    if (matched) groups.push({ source: rx.name, sourceNote: "Prescription", effects: matched });
+  });
+
+  return groups;
+}
+
 const SUPPORT_QUOTES = [
   "You've got this!",
   "You are strong.",
@@ -115,6 +431,10 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 const fmtDate = (iso) => {
   const d = new Date(iso + "T00:00:00");
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+};
+const fmtShortDate = (iso) => {
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 };
 function daysBetween(fromIso, toIso) {
   const a = new Date(fromIso + "T00:00:00");
@@ -180,7 +500,8 @@ async function summariseNotes(text) {
   }
 }
 
-const DEFAULT_PATIENT = { name: "", dob: "", address: "", height: "", weight: "" };
+const DEFAULT_PATIENT = { name: "", dob: "", address: "", height: "", weight: "", helpline: "" };
+function telHref(raw) { return `tel:${(raw || "").replace(/[^\d+]/g, "")}`; }
 
 // Bloods and Measurements each now have their own dedicated tab, rather than
 // living inside a generic multi-category "Test Results" list. This folds any
@@ -205,7 +526,7 @@ function migrateLegacyTestData(cats, entriesObj) {
 }
 
 // ================= GLOBAL RESPONSIVE STYLES =================
-const GLOBAL_CSS = `
+function getGlobalCss() { return `
   @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap');
   .tt-btn { cursor: pointer; border: none; font-family: inherit; transition: all 0.15s ease; }
   .tt-btn:hover { filter: brightness(0.97); }
@@ -219,8 +540,8 @@ const GLOBAL_CSS = `
 
   .tt-app { width: 100%; box-sizing: border-box; }
   .tt-splash {
-    min-height: 100vh; min-height: 100dvh; width: 100%; box-sizing: border-box;
-    display: flex; flex-direction: column; border-radius: 0;
+    position: fixed; inset: 0; width: 100%; height: 100%; box-sizing: border-box;
+    display: flex; flex-direction: column; border-radius: 0; overflow-y: auto;
   }
   .tt-splash-inner {
     flex: 1; width: 100%; box-sizing: border-box;
@@ -289,9 +610,16 @@ const GLOBAL_CSS = `
       padding-right: calc(28px + env(safe-area-inset-right));
     }
   }
-`;
+`; }
 
 export default function App() {
+  // ----- Theme (light/dark) -----
+  const [themeMode, setThemeModeState] = useState(() => getStoredThemeMode());
+  function setThemeMode(mode) {
+    applyThemeMode(mode); // mutates T + derived style maps in place
+    setThemeModeState(mode); // triggers the re-render that picks up the new values
+  }
+
   // ----- Auth & household -----
   const [authChecked, setAuthChecked] = useState(false);
   const [session, setSession] = useState(null);
@@ -308,6 +636,7 @@ export default function App() {
   const [treatments, setTreatments] = useState([]);
   const [appointments, setAppointments] = useState([]);
   const [entries, setEntries] = useState({ Bloods: [], Measurements: [] });
+  const [prescriptions, setPrescriptions] = useState([]);
   const [patient, setPatient] = useState(DEFAULT_PATIENT);
   const [cardOrder, setCardOrder] = useState(DEFAULT_CARD_ORDER);
   const [supportMessages, setSupportMessages] = useState([]);
@@ -391,7 +720,7 @@ export default function App() {
   useEffect(() => {
     if (!householdId) return;
     (async () => {
-      const [t, appts, e, p, co, to, sm] = await Promise.all([
+      const [t, appts, e, p, co, to, sm, rx] = await Promise.all([
         loadKey("treatments", []),
         loadKey("appointments", []),
         loadKey("test-entries", { Bloods: [], Measurements: [] }),
@@ -399,12 +728,14 @@ export default function App() {
         loadKey("summary-card-order", DEFAULT_CARD_ORDER),
         loadKey("tab-order", DEFAULT_TAB_ORDER),
         listSupportMessages(),
+        loadKey("prescriptions", []),
       ]);
       const loadedEntries = migrateLegacyTestData(null, e);
       setTreatments(t); setAppointments(appts); setEntries(loadedEntries); setPatient(p);
       setCardOrder(co && co.length === DEFAULT_CARD_ORDER.length ? co : DEFAULT_CARD_ORDER);
       setTabOrder(to && to.length === DEFAULT_TAB_ORDER.length ? to.map(id => (id === "tests" ? "measurements" : id)) : DEFAULT_TAB_ORDER);
       setSupportMessages(sm);
+      setPrescriptions(rx);
       setLastSynced(new Date());
       setReady(true);
 
@@ -444,11 +775,12 @@ export default function App() {
     async function refreshAll() {
       setSyncing(true);
       try {
-        const [t, appts, e, p, co, to, sm] = await Promise.all([
+        const [t, appts, e, p, co, to, sm, rx] = await Promise.all([
           loadKey("treatments", []), loadKey("appointments", []),
           loadKey("test-entries", { Bloods: [], Measurements: [] }), loadKey("patient-info", DEFAULT_PATIENT),
           loadKey("summary-card-order", DEFAULT_CARD_ORDER), loadKey("tab-order", DEFAULT_TAB_ORDER),
           listSupportMessages(),
+          loadKey("prescriptions", []),
         ]);
         applyIfChanged(setTreatments, "treatments", t);
         applyIfChanged(setAppointments, "appointments", appts);
@@ -456,6 +788,7 @@ export default function App() {
         applyIfChanged(setPatient, "patient", p);
         applyIfChanged(setCardOrder, "cardOrder", co && co.length === DEFAULT_CARD_ORDER.length ? co : DEFAULT_CARD_ORDER);
         applyIfChanged(setTabOrder, "tabOrder", to && to.length === DEFAULT_TAB_ORDER.length ? to.map(id => (id === "tests" ? "measurements" : id)) : DEFAULT_TAB_ORDER);
+        applyIfChanged(setPrescriptions, "prescriptions", rx);
         setSupportMessages(sm);
         setLastSynced(new Date());
         setSyncError(false);
@@ -499,6 +832,12 @@ export default function App() {
   }, [entries, ready, canEdit]);
   useEffect(() => {
     if (!ready) return;
+    if (remoteFlags.current.prescriptions) { remoteFlags.current.prescriptions = false; return; }
+    if (!canEdit) return;
+    saveKey("prescriptions", prescriptions).then(ok => setSyncError(!ok));
+  }, [prescriptions, ready, canEdit]);
+  useEffect(() => {
+    if (!ready) return;
     if (remoteFlags.current.patient) { remoteFlags.current.patient = false; return; }
     if (!canEdit) return;
     saveKey("patient-info", patient).then(ok => setSyncError(!ok));
@@ -524,6 +863,7 @@ export default function App() {
             saveKey("treatments", treatments),
             saveKey("appointments", appointments),
             saveKey("test-entries", entries),
+            saveKey("prescriptions", prescriptions),
             saveKey("patient-info", patient),
             saveKey("summary-card-order", cardOrder),
             saveKey("tab-order", tabOrder),
@@ -554,9 +894,9 @@ export default function App() {
         fontFamily: T.ui, background: `linear-gradient(160deg, ${T.navy}, ${T.accentDeep})`,
         color: "#fff", overflow: "hidden", border: `1px solid ${T.line}`,
       }}>
-        <style>{GLOBAL_CSS}</style>
+        <style>{getGlobalCss()}</style>
         <div className="tt-splash-inner">
-          <Heart size={44} fill={T.accentBright} color={T.accentBright} />
+          <img src="/lockup-dark.svg" alt="CareTrack" style={{ height: 56, width: "auto" }} />
           <div style={{ fontSize: 27, fontWeight: 700, lineHeight: 1.35, maxWidth: 380 }}>{supportMessage}</div>
           {ready ? (
             <button
@@ -581,13 +921,14 @@ export default function App() {
     && Object.values(entries).every(arr => (arr || []).length === 0) && !patient.name;
 
   const exportBundle = {
-    treatments, appointments, entries, patient, cardOrder, supportMessages, tabOrder,
+    treatments, appointments, entries, prescriptions, patient, cardOrder, supportMessages, tabOrder,
   };
 
   function importAllData(bundle) {
     setTreatments(Array.isArray(bundle.treatments) ? bundle.treatments : []);
     setAppointments(Array.isArray(bundle.appointments) ? bundle.appointments : []);
     setEntries(migrateLegacyTestData(bundle.categories, bundle.entries));
+    setPrescriptions(Array.isArray(bundle.prescriptions) ? bundle.prescriptions : []);
     setPatient(bundle.patient && typeof bundle.patient === "object" ? { ...DEFAULT_PATIENT, ...bundle.patient } : DEFAULT_PATIENT);
     setCardOrder(Array.isArray(bundle.cardOrder) && bundle.cardOrder.length === DEFAULT_CARD_ORDER.length ? bundle.cardOrder : DEFAULT_CARD_ORDER);
     setTabOrder(
@@ -610,6 +951,7 @@ export default function App() {
   async function handleAddSupportMessage(entry) {
     await addSupportMessage(entry);
     setSupportMessages(await listSupportMessages());
+    notifyHousehold({ title: "❤️ New message of support", body: entry.name ? `From ${entry.name}` : "Someone left a message for you" });
   }
   async function handleDeleteSupportMessage(id) {
     await deleteSupportMessage(id);
@@ -621,7 +963,7 @@ export default function App() {
       fontFamily: T.ui, background: T.paper, minHeight: 600, borderRadius: 16,
       overflow: "hidden", border: `1px solid ${T.line}`, color: T.ink,
     }}>
-      <style>{GLOBAL_CSS}</style>
+      <style>{getGlobalCss()}</style>
 
       <Header
         mainTab={mainTab} setMainTab={setMainTab} treatments={treatments} possessive={possessive}
@@ -650,6 +992,15 @@ export default function App() {
             <strong>Settings → Backup, export &amp; sharing</strong>{canEdit ? "." : " for more."}
           </div>
         )}
+        {mainTab === "summary" && patient.helpline && (
+          <a href={telHref(patient.helpline)} style={{
+            display: "flex", alignItems: "center", gap: 8, textDecoration: "none",
+            background: T.warnBg, border: `1px solid ${T.warn}`, color: "#7A4E08",
+            borderRadius: 10, padding: "10px 14px", fontSize: 12.5, marginBottom: 16, fontWeight: 600,
+          }}>
+            <Phone size={14} style={{ flexShrink: 0 }} /> Oncology helpline: {patient.helpline} (tap to call)
+          </a>
+        )}
         {mainTab === "contents" && <ContentsTab onNavigate={goTo} possessive={possessive} />}
         {mainTab === "summary" && (
           <SummaryDashboardTab
@@ -663,12 +1014,17 @@ export default function App() {
         {mainTab === "support" && <SupportMessagesTab messages={supportMessages} onAdd={handleAddSupportMessage} onDelete={handleDeleteSupportMessage} canDelete={canEdit} />}
         {mainTab === "bloods" && <BloodsTab bloodsEntries={entries.Bloods || []} setBloodsEntries={(updater) => setEntries(prev => ({ ...prev, Bloods: typeof updater === "function" ? updater(prev.Bloods || []) : updater }))} canEdit={canEdit} />}
         {mainTab === "measurements" && <MeasurementsTab measurementsEntries={entries.Measurements || []} setMeasurementsEntries={(updater) => setEntries(prev => ({ ...prev, Measurements: typeof updater === "function" ? updater(prev.Measurements || []) : updater }))} canEdit={canEdit} />}
+        {mainTab === "prescriptions" && <PrescriptionsTab prescriptions={prescriptions} setPrescriptions={setPrescriptions} treatments={treatments} canEdit={canEdit} />}
+        {mainTab === "sideeffects" && <SideEffectsTab treatments={treatments} prescriptions={prescriptions} helpline={patient.helpline} />}
+        {mainTab === "nutrition" && <NutritionTab />}
+        {mainTab === "insights" && <InsightsTab treatments={treatments} prescriptions={prescriptions} bloodsEntries={entries.Bloods || []} />}
         {mainTab === "guidance" && <GuidanceTab />}
         {mainTab === "settings" && (
           <SettingsTab
             patient={patient} setPatient={setPatient} exportBundle={exportBundle} onImportAll={importAllData}
             canEdit={canEdit} canManageHousehold={canManageHousehold}
             householdId={householdId} householdName={membership.householdName}
+            themeMode={themeMode} setThemeMode={setThemeMode}
           />
         )}
       </div>
@@ -679,7 +1035,7 @@ export default function App() {
 function FullScreenMessage({ message }) {
   return (
     <div className="tt-app tt-splash" style={{ fontFamily: T.ui, background: T.paper, color: T.accent }}>
-      <style>{GLOBAL_CSS}</style>
+      <style>{getGlobalCss()}</style>
       <div className="tt-splash-inner">{message}</div>
     </div>
   );
@@ -720,10 +1076,9 @@ function AuthScreen({ inviteToken, inviteError }) {
       fontFamily: T.ui, background: `linear-gradient(160deg, ${T.navy}, ${T.accentDeep})`, color: "#fff",
       overflow: "hidden", border: `1px solid ${T.line}`,
     }}>
-      <style>{GLOBAL_CSS}</style>
+      <style>{getGlobalCss()}</style>
       <div className="tt-splash-inner">
-        <Heart size={40} fill={T.accentBright} color={T.accentBright} />
-        <div style={{ fontSize: 22, fontWeight: 700 }}>Treatment Tracker</div>
+        <img src="/lockup-dark.svg" alt="CareTrack" style={{ height: 48, width: "auto" }} />
         {inviteToken && (
           <div style={{ fontSize: 12.5, background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,.2)", borderRadius: 10, padding: "8px 14px", maxWidth: 320 }}>
             You've been sent an invite link — sign up or log in below to join as a viewer.
@@ -731,7 +1086,7 @@ function AuthScreen({ inviteToken, inviteError }) {
         )}
         {inviteError && <div style={{ fontSize: 12.5, color: "#FBE4E7" }}>{inviteError}</div>}
 
-        <div style={{ background: "#fff", borderRadius: 14, padding: 22, width: 300, maxWidth: "100%", textAlign: "left", color: T.ink }}>
+        <div style={{ background: T.card, borderRadius: 14, padding: 22, width: 300, maxWidth: "100%", textAlign: "left", color: T.ink }}>
           <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
             <button className="tt-btn" onClick={() => setMode("signup")} style={{
               flex: 1, padding: "8px", borderRadius: 8, fontSize: 13, fontWeight: 600,
@@ -777,16 +1132,16 @@ function CreateHouseholdScreen({ inviteError, onCreated }) {
       fontFamily: T.ui, background: `linear-gradient(160deg, ${T.navy}, ${T.accentDeep})`, color: "#fff",
       overflow: "hidden", border: `1px solid ${T.line}`,
     }}>
-      <style>{GLOBAL_CSS}</style>
+      <style>{getGlobalCss()}</style>
       <div className="tt-splash-inner">
-        <Heart size={40} fill={T.accentBright} color={T.accentBright} />
+        <img src="/lockup-dark.svg" alt="CareTrack" style={{ height: 48, width: "auto" }} />
         <div style={{ fontSize: 22, fontWeight: 700, textAlign: "center" }}>Let's set up your tracker</div>
         {inviteError && (
           <div style={{ fontSize: 12.5, color: "#FBE4E7", maxWidth: 320, textAlign: "center" }}>
             {inviteError} If someone invited you, ask them to double-check the link and send it again.
           </div>
         )}
-        <div style={{ background: "#fff", borderRadius: 14, padding: 22, width: 300, maxWidth: "100%", textAlign: "left", color: T.ink }}>
+        <div style={{ background: T.card, borderRadius: 14, padding: 22, width: 300, maxWidth: "100%", textAlign: "left", color: T.ink }}>
           <Field label="What should we call this? (optional)">
             <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Kate's Tracker" style={inputStyle} />
           </Field>
@@ -809,6 +1164,10 @@ const TAB_META = {
   bloods: { icon: <Droplet size={15} />, label: "Bloods" },
   support: { icon: <Heart size={15} />, label: "Support Messages" },
   measurements: { icon: <Ruler size={15} />, label: "Measurements" },
+  prescriptions: { icon: <Pill size={15} />, label: "Prescriptions" },
+  sideeffects: { icon: <AlertTriangle size={15} />, label: "Side Effects" },
+  nutrition: { icon: <Apple size={15} />, label: "Nutrition" },
+  insights: { icon: <Sparkles size={15} />, label: "Insights" },
   guidance: { icon: <BookOpen size={15} />, label: "Guidance" },
   settings: { icon: <SettingsIcon size={15} />, label: "Settings" },
 };
@@ -816,8 +1175,12 @@ const TAB_DESCRIPTIONS = {
   summary: "A dashboard of key stats and messages of support — next treatment/appointment, progress so far, and more. Drag cards to reorder them.",
   calendar: "Schedule and track chemotherapy, immunotherapy, surgery and radiotherapy sessions, with status tracking, cycle/day tracking, and drag-and-drop rescheduling.",
   appointments: "Track consultant, registrar and surgical appointments, with notes that get automatically condensed into key takeaways.",
-  bloods: "Log haematology and biochemistry blood test results element by element, with trend charts shown against a typical normal range.",
+  bloods: "Log haematology and biochemistry blood test results element by element, with trend charts and a full summary table against a typical normal range.",
   measurements: "Log scan measurements (MRI, CT, mammogram, ultrasound) and see them charted over time.",
+  prescriptions: "Track supportive medications like Filgrastim or steroids, linked to a specific treatment cycle, with the dose schedule worked out automatically.",
+  sideeffects: "Common side effects, specific to the treatments and prescriptions you've actually logged.",
+  nutrition: "Look up nutrients and foods commonly associated with a specific blood measurement.",
+  insights: "Spot statistical patterns between treatments/prescriptions and blood results in your own logged data.",
   support: "Read and add messages of love and encouragement from friends and family — open to everyone, including viewers.",
   guidance: "A full walkthrough of how to use the app, including roles, permissions, and how to add data.",
   settings: "Manage patient details, household members and invites, and back up or restore your data.",
@@ -839,6 +1202,10 @@ function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, synci
     bloods: possessive ? `${possessive} Bloods` : "Bloods",
     support: "Support Messages",
     measurements: possessive ? `${possessive} Measurements` : "Measurements",
+    prescriptions: possessive ? `${possessive} Prescriptions` : "Prescriptions",
+    sideeffects: "Side Effects",
+    nutrition: "Nutrition",
+    insights: "Insights",
     guidance: "Guidance",
     settings: "Settings",
   };
@@ -850,6 +1217,10 @@ function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, synci
     bloods: "Blood test results over time, element by element",
     support: "Messages of love and encouragement",
     measurements: "Scan measurements and results over time",
+    prescriptions: "Supportive medications linked to your treatment cycle",
+    sideeffects: "Based on what you've logged in Treatments & Prescriptions",
+    nutrition: "Nutrients and foods linked to a blood measurement",
+    insights: "Patterns spotted in your own logged data",
     guidance: "How to use this app",
     settings: "Patient details and app preferences",
   };
@@ -865,16 +1236,19 @@ function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, synci
   return (
     <div className="tt-header" style={{ background: T.navy, borderBottom: `3px solid ${T.accentBright}`, color: "#fff" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: -0.2 }}>{titles[mainTab]}</div>
-          <div style={{ fontSize: 12.5, color: "rgba(255,255,255,.66)", marginTop: 2 }}>{subs[mainTab]}</div>
-          {householdName && (
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,.5)", marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
-              <span>{householdName}</span>
-              <span style={{ background: "rgba(255,255,255,.1)", borderRadius: 4, padding: "1px 6px", fontWeight: 700, textTransform: "uppercase", fontSize: 9.5, letterSpacing: 0.4 }}>{role}</span>
-              <button className="tt-btn" onClick={onSignOut} style={{ background: "transparent", color: "rgba(255,255,255,.6)", fontSize: 11, textDecoration: "underline", padding: 0 }}>Log out</button>
-            </div>
-          )}
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <Logo variant="dark" withWordmark={false} size={28} />
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: -0.2 }}>{titles[mainTab]}</div>
+            <div style={{ fontSize: 12.5, color: "rgba(255,255,255,.66)", marginTop: 2 }}>{subs[mainTab]}</div>
+            {householdName && (
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,.5)", marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                <span>{householdName}</span>
+                <span style={{ background: "rgba(255,255,255,.1)", borderRadius: 4, padding: "1px 6px", fontWeight: 700, textTransform: "uppercase", fontSize: 9.5, letterSpacing: 0.4 }}>{role}</span>
+                <button className="tt-btn" onClick={onSignOut} style={{ background: "transparent", color: "rgba(255,255,255,.6)", fontSize: 11, textDecoration: "underline", padding: 0 }}>Log out</button>
+              </div>
+            )}
+          </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {next && mainTab !== "settings" && (
@@ -963,7 +1337,7 @@ function DraggableTab({ id, active, meta, onClick, onReorder }) {
 
 // ================= CONTENTS TAB =================
 function ContentsTab({ onNavigate, possessive }) {
-  const order = ["summary", "calendar", "appointments", "bloods", "measurements", "support", "guidance", "settings"];
+  const order = ["summary", "calendar", "appointments", "bloods", "measurements", "prescriptions", "sideeffects", "nutrition", "insights", "support", "guidance", "settings"];
   return (
     <div>
       <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
@@ -1266,11 +1640,28 @@ function CalendarTab({ treatments, setTreatments, view, setView, canEdit }) {
   const byDate = useMemo(() => {
     const m = {};
     treatments.forEach(t => { (m[t.date] = m[t.date] || []).push(t); });
+    Object.values(m).forEach(arr => arr.sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99")));
     return m;
   }, [treatments]);
 
-  function addTreatment(t) { setTreatments(prev => [...prev, { id: uid(), history: [], ...t }]); setFormOpen(false); }
-  function updateTreatment(id, patch) { setTreatments(prev => prev.map(t => (t.id === id ? { ...t, ...patch } : t))); }
+  function addTreatment(t) {
+    setTreatments(prev => [...prev, { id: uid(), history: [], ...t }]);
+    setFormOpen(false);
+    const label = t.type === "Other" ? (t.typeCustom || "treatment") : t.type;
+    notifyHousehold({ title: "💉 New treatment added", body: `${label} on ${fmtDate(t.date)}` });
+  }
+  function updateTreatment(id, patch) {
+    setTreatments(prev => {
+      const before = prev.find(t => t.id === id);
+      const next = prev.map(t => (t.id === id ? { ...t, ...patch } : t));
+      if (patch.status === "Completed" && before && before.status !== "Completed") {
+        const after = next.find(t => t.id === id);
+        const label = after.type === "Other" ? (after.typeCustom || "treatment") : after.type;
+        notifyHousehold({ title: "✅ Treatment completed", body: `${label} on ${fmtDate(after.date)}` });
+      }
+      return next;
+    });
+  }
   function deleteTreatment(id) { setTreatments(prev => prev.filter(t => t.id !== id)); setEditing(null); }
   function handleDrop(dateStr, e) {
     e.preventDefault(); setDragOverDate(null);
@@ -1382,48 +1773,49 @@ function ViewToggleBtn({ active, onClick, icon, label }) {
 }
 
 function SummaryView({ treatments, onRowClick }) {
-  const sorted = useMemo(() => [...treatments].sort((a, b) => a.date.localeCompare(b.date)), [treatments]);
+  const sorted = useMemo(() => [...treatments].sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || "")), [treatments]);
   const today = todayStr();
   if (sorted.length === 0) {
     return <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>No treatments added yet.</div>;
   }
   return (
-    <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12 }}>
-      <table style={{ borderCollapse: "collapse", fontSize: 13 }}>
-        <thead>
-          <tr style={{ background: T.paper, textAlign: "left" }}>
-            <th style={thStyle}>Cycle</th>
-            <th style={thStyle}>Day</th>
-            <th style={thStyle}>Date</th>
-            <th style={thStyle}>Type</th>
-            <th style={thStyle}>Drug(s)</th>
-            <th style={thStyle}>Dose</th>
-            <th style={thStyle}>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map(t => {
-            const isPast = t.date < today;
-            const ts = TYPE_STYLES[t.type] || TYPE_STYLES.Other;
-            const sm = STATUS_META[t.status] || STATUS_META.Scheduled;
-            return (
-              <tr key={t.id} onClick={() => onRowClick(t)} style={{ borderTop: `1px solid ${T.lineSoft}`, cursor: "pointer", opacity: isPast ? 0.72 : 1 }}>
-                <td style={{ ...tdStyle, fontFamily: T.mono }}>{t.cycle || "—"}</td>
-                <td style={{ ...tdStyle, fontFamily: T.mono }}>{t.day || "—"}</td>
-                <td style={{ ...tdStyle, fontFamily: T.mono }}>{fmtDate(t.date)}</td>
-                <td style={tdStyle}>
-                  <span style={{ background: ts.bg, color: ts.text, borderLeft: `3px solid ${ts.border}`, borderRadius: 5, padding: "2px 8px", fontWeight: 600, fontSize: 12 }}>
-                    {t.type === "Other" ? (t.typeCustom || "Other") : t.type}
-                  </span>
-                </td>
-                <td style={tdStyle}>{t.drugs || "—"}</td>
-                <td style={{ ...tdStyle, fontFamily: T.mono }}>{t.dose ? `${t.dose}%` : "—"}</td>
-                <td style={tdStyle}><span style={{ background: sm.bg, color: sm.color, borderRadius: 5, padding: "2px 8px", fontWeight: 700, fontSize: 11.5 }}>{sm.label}</span></td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div>
+      <div style={{ fontSize: 11.5, color: T.inkSoft, marginBottom: 10 }}>
+        Tap a row to see the full details — time, drugs, dose, and any notes.
+      </div>
+      <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12 }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: T.paper, textAlign: "left" }}>
+              <th style={thStyle}>Cycle</th>
+              <th style={thStyle}>Day</th>
+              <th style={thStyle}>Date</th>
+              <th style={thStyle}>Type</th>
+              <th style={thStyle}>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map(t => {
+              const isPast = t.date < today;
+              const ts = TYPE_STYLES[t.type] || TYPE_STYLES.Other;
+              const sm = STATUS_META[t.status] || STATUS_META.Scheduled;
+              return (
+                <tr key={t.id} onClick={() => onRowClick(t)} style={{ borderTop: `1px solid ${T.lineSoft}`, cursor: "pointer", opacity: isPast ? 0.72 : 1 }}>
+                  <td style={{ ...tdStyle, fontFamily: T.mono }}>{t.cycle || "—"}</td>
+                  <td style={{ ...tdStyle, fontFamily: T.mono }}>{t.day || "—"}</td>
+                  <td style={{ ...tdStyle, fontFamily: T.mono }}>{fmtDate(t.date)}</td>
+                  <td style={tdStyle}>
+                    <span style={{ background: ts.bg, color: ts.text, borderLeft: `3px solid ${ts.border}`, borderRadius: 5, padding: "2px 8px", fontWeight: 600, fontSize: 12 }}>
+                      {t.type === "Other" ? (t.typeCustom || "Other") : t.type}
+                    </span>
+                  </td>
+                  <td style={tdStyle}><span style={{ background: sm.bg, color: sm.color, borderRadius: 5, padding: "2px 8px", fontWeight: 700, fontSize: 11.5 }}>{sm.label}</span></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1433,9 +1825,9 @@ function TreatmentChip({ t, onClick }) {
   const sm = STATUS_META[t.status] || STATUS_META.Scheduled;
   return (
     <div draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", t.id)} onClick={onClick}
-      title={`${t.type === "Other" ? t.typeCustom : t.type} — ${t.drugs || ""}`}
+      title={`${t.type === "Other" ? t.typeCustom : t.type}${t.time ? ` at ${t.time}` : ""} — ${t.drugs || ""}`}
       style={{ background: ts.bg, borderLeft: `3px solid ${ts.border}`, color: ts.text, borderRadius: 6, padding: "4px 6px", fontSize: 10.5, lineHeight: 1.3, cursor: "grab", display: "flex", flexDirection: "column", gap: 1 }}>
-      <div style={{ fontWeight: 700 }}>{t.type === "Other" ? t.typeCustom : t.type}{t.dose ? ` · ${t.dose}%` : ""}</div>
+      <div style={{ fontWeight: 700 }}>{t.time ? `${t.time} · ` : ""}{t.type === "Other" ? t.typeCustom : t.type}{t.dose ? ` · ${t.dose}%` : ""}</div>
       {t.drugs && <div style={{ opacity: 0.85, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.drugs}</div>}
       <span style={{ alignSelf: "flex-start", background: sm.bg, color: sm.color, borderRadius: 4, padding: "1px 5px", fontWeight: 700, fontSize: 9.5, marginTop: 1 }}>{sm.label}</span>
     </div>
@@ -1475,6 +1867,55 @@ function buildMonthGrid(year, month) {
   return cells;
 }
 function isoDate(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+
+// ---------- Prescription schedule helpers ----------
+const PRESCRIPTION_SUGGESTIONS = ["Filgrastim", "Dexamethasone", "Prednisolone", "Ondansetron", "Ciprofloxacin"];
+
+function addDaysToDate(dateStr, n) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + n);
+  return isoDate(d);
+}
+
+function generateRxSchedule(rx) {
+  if (!rx.startDate) return [];
+  if (rx.courseType === "taper") {
+    const schedule = [];
+    let offset = 0;
+    (rx.stages || []).forEach(stage => {
+      const days = parseInt(stage.days, 10) || 0;
+      for (let i = 0; i < days; i++) {
+        schedule.push({ date: addDaysToDate(rx.startDate, offset), label: `${stage.dose}${stage.unit ? ` ${stage.unit}` : ""}` });
+        offset++;
+      }
+    });
+    return schedule;
+  }
+  const perDay = rx.frequency === "Twice daily" ? 2 : 1;
+  const total = parseInt(rx.doseCount, 10) || 0;
+  const schedule = [];
+  let offset = 0, done = 0;
+  while (done < total) {
+    const todayCount = Math.min(perDay, total - done);
+    schedule.push({ date: addDaysToDate(rx.startDate, offset), label: todayCount > 1 ? `${todayCount} doses` : "1 dose" });
+    done += todayCount;
+    offset++;
+  }
+  return schedule;
+}
+
+function rxSummaryLine(rx) {
+  const schedule = generateRxSchedule(rx);
+  if (schedule.length === 0) return "No schedule set";
+  const start = fmtDate(schedule[0].date);
+  const end = fmtDate(schedule[schedule.length - 1].date);
+  if (rx.courseType === "taper") {
+    const stagesText = (rx.stages || []).map(s => `${s.dose}${s.unit || ""} × ${s.days}d`).join(", ");
+    return `${stagesText} (${start} – ${end})`;
+  }
+  const freq = rx.frequency === "Twice daily" ? "twice daily" : "once daily";
+  return `${rx.doseCount} dose${Number(rx.doseCount) === 1 ? "" : "s"}, ${freq}, starting ${start}`;
+}
 function shiftMonth(cursor, delta) {
   let m = cursor.month + delta, y = cursor.year;
   if (m < 0) { m = 11; y -= 1; } else if (m > 11) { m = 0; y += 1; }
@@ -1503,10 +1944,12 @@ function Field({ label, children }) {
     </div>
   );
 }
-const inputStyle = { width: "100%", padding: "9px 11px", borderRadius: 8, border: `1px solid ${T.line}`, fontSize: 13.5, fontFamily: "inherit", background: T.card, boxSizing: "border-box", color: T.ink };
+function buildInputStyle() { return { width: "100%", padding: "9px 11px", borderRadius: 8, border: `1px solid ${T.line}`, fontSize: 13.5, fontFamily: "inherit", background: T.card, boxSizing: "border-box", color: T.ink }; }
+const inputStyle = buildInputStyle();
 
 function AddTreatmentModal({ defaultDate, onClose, onSave }) {
   const [date, setDate] = useState(defaultDate);
+  const [time, setTime] = useState("");
   const [type, setType] = useState("Chemotherapy");
   const [typeCustom, setTypeCustom] = useState("");
   const [drugs, setDrugs] = useState("");
@@ -1517,7 +1960,10 @@ function AddTreatmentModal({ defaultDate, onClose, onSave }) {
 
   return (
     <ModalShell title="Add treatment" onClose={onClose}>
-      <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} /></Field>
+      <div className="tt-2col">
+        <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} /></Field>
+        <Field label="Time (optional)"><input type="time" value={time} onChange={e => setTime(e.target.value)} style={inputStyle} /></Field>
+      </div>
       <Field label="Type">
         <select className="tt-select" value={type} onChange={e => setType(e.target.value)} style={inputStyle}>
           {TREATMENT_TYPES.map(tp => <option key={tp}>{tp}</option>)}
@@ -1533,7 +1979,7 @@ function AddTreatmentModal({ defaultDate, onClose, onSave }) {
       <Field label="Drug(s) / procedure detail"><input value={drugs} onChange={e => setDrugs(e.target.value)} placeholder="e.g. Carboplatin, Paclitaxel" style={inputStyle} /></Field>
       <Field label="Dose (%, optional)"><input value={dose} onChange={e => setDose(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="e.g. 100" style={inputStyle} /></Field>
       <Field label="Notes (optional)"><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" }} /></Field>
-      <button className="tt-btn" onClick={() => onSave({ date, type, typeCustom, drugs, dose, cycle, day, notes, status: "Scheduled" })}
+      <button className="tt-btn" onClick={() => onSave({ date, time, type, typeCustom, drugs, dose, cycle, day, notes, status: "Scheduled" })}
         style={{ width: "100%", background: T.accent, color: "#fff", padding: "11px", borderRadius: 9, fontSize: 13.5, fontWeight: 600, marginTop: 4 }}>
         Save treatment
       </button>
@@ -1544,6 +1990,7 @@ function AddTreatmentModal({ defaultDate, onClose, onSave }) {
 function EditTreatmentModal({ t, onClose, onSave, onDelete, canEdit = true }) {
   const [status, setStatus] = useState(t.status);
   const [newDate, setNewDate] = useState(t.date);
+  const [time, setTime] = useState(t.time || "");
   const [drugs, setDrugs] = useState(t.drugs || "");
   const [dose, setDose] = useState(t.dose || "");
   const [cycle, setCycle] = useState(t.cycle || "");
@@ -1552,9 +1999,9 @@ function EditTreatmentModal({ t, onClose, onSave, onDelete, canEdit = true }) {
 
   function handleSave() {
     if (status === "Delayed" && newDate !== t.date) {
-      onSave({ status: "Delayed", date: newDate, drugs, dose, cycle, day, notes, history: [...(t.history || []), { at: new Date().toISOString(), note: `Delayed from ${fmtDate(t.date)} to ${fmtDate(newDate)}` }] });
+      onSave({ status: "Delayed", date: newDate, time, drugs, dose, cycle, day, notes, history: [...(t.history || []), { at: new Date().toISOString(), note: `Delayed from ${fmtDate(t.date)} to ${fmtDate(newDate)}` }] });
     } else {
-      onSave({ status, drugs, dose, cycle, day, notes });
+      onSave({ status, time, drugs, dose, cycle, day, notes });
     }
   }
 
@@ -1566,6 +2013,7 @@ function EditTreatmentModal({ t, onClose, onSave, onDelete, canEdit = true }) {
         </select>
       </Field>
       {status === "Delayed" && <Field label="New scheduled date"><input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>}
+      <Field label="Time (optional)"><input type="time" value={time} onChange={e => setTime(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
       <div className="tt-2col">
         <Field label="Cycle"><input value={cycle} onChange={e => setCycle(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
         <Field label="Day"><input value={day} onChange={e => setDay(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
@@ -1599,7 +2047,7 @@ function EditTreatmentModal({ t, onClose, onSave, onDelete, canEdit = true }) {
 
 // ================= BLOODS TAB =================
 function BloodsTab({ bloodsEntries, setBloodsEntries, canEdit = true }) {
-  const [sub, setSub] = useState("chart"); // chart | haematology | biochemistry | Other
+  const [sub, setSub] = useState("summarytable"); // summarytable | haematology | biochemistry | Other
   const [selectedElement, setSelectedElement] = useState(HAEMATOLOGY_KEYS[0]);
 
   useEffect(() => {
@@ -1612,13 +2060,14 @@ function BloodsTab({ bloodsEntries, setBloodsEntries, canEdit = true }) {
 
   function addEntry(entry) {
     setBloodsEntries(prev => [...prev, { id: uid(), ...entry }]);
+    notifyHousehold({ title: "🩸 New blood result added", body: `${entry.description}: ${entry.score}${entry.unit ? ` ${entry.unit}` : ""}` });
   }
   function deleteEntry(id) {
     setBloodsEntries(prev => prev.filter(e => e.id !== id));
   }
 
   const topTabs = [
-    { id: "chart", label: "Chart", icon: <TrendingUp size={13} /> },
+    { id: "summarytable", label: "Summary", icon: <List size={13} /> },
     { id: "haematology", label: "Haematology" },
     { id: "biochemistry", label: "Biochemistry" },
     { id: "Other", label: "Other" },
@@ -1654,7 +2103,7 @@ function BloodsTab({ bloodsEntries, setBloodsEntries, canEdit = true }) {
         </div>
       )}
 
-      {sub === "chart" && <BloodsChartPanel bloodsEntries={bloodsEntries} />}
+      {sub === "summarytable" && <BloodsSummaryTable bloodsEntries={bloodsEntries} />}
       {sub === "Other" && (
         <BloodElementPanel
           elementName={null}
@@ -1676,6 +2125,279 @@ function BloodsTab({ bloodsEntries, setBloodsEntries, canEdit = true }) {
         />
       )}
     </div>
+  );
+}
+
+function BloodsSummaryTable({ bloodsEntries }) {
+  const grouped = useMemo(() => {
+    const map = {};
+    bloodsEntries.forEach(e => {
+      const v = parseFloat(e.score);
+      if (isNaN(v)) return;
+      if (!map[e.description]) map[e.description] = [];
+      map[e.description].push({ date: e.date, value: v, unit: e.unit || (BLOOD_NORMALS[e.description] ? BLOOD_NORMALS[e.description].unit : "") });
+    });
+    Object.values(map).forEach(arr => arr.sort((a, b) => a.date.localeCompare(b.date)));
+    return map;
+  }, [bloodsEntries]);
+
+  const types = useMemo(() => {
+    return Object.keys(grouped).sort((a, b) => {
+      const ia = BLOOD_ELEMENT_KEYS.indexOf(a), ib = BLOOD_ELEMENT_KEYS.indexOf(b);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [grouped]);
+
+  const allDates = useMemo(() => {
+    const s = new Set();
+    Object.values(grouped).forEach(arr => arr.forEach(r => s.add(r.date)));
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
+  }, [grouped]);
+
+  const [filterType, setFilterType] = useState("");
+  const [modalChartType, setModalChartType] = useState(null);
+  const [sortKey, setSortKey] = useState("type");
+  const [sortDir, setSortDir] = useState("asc");
+
+  function pctChange(newV, oldV) {
+    if (!oldV) return null;
+    return ((newV - oldV) / Math.abs(oldV)) * 100;
+  }
+  // Accounting-style formatting: negatives in brackets, positives shown plain
+  // (no + sign needed — the green colour already signals a positive move).
+  function fmtDelta(diff, pct) {
+    const diffStr = diff < 0 ? `(${Math.abs(diff).toFixed(1)})` : diff.toFixed(1);
+    const pctStr = pct < 0 ? `(${Math.abs(pct).toFixed(0)}%)` : `${pct.toFixed(0)}%`;
+    return `${diffStr} ${pctStr}`;
+  }
+
+  // Pre-compute everything each row needs, once, so filtering/sorting below is cheap.
+  const rowData = useMemo(() => types.map(type => {
+    const rows = grouped[type];
+    const byDate = Object.fromEntries(rows.map(r => [r.date, r.value]));
+    const recent = rows[rows.length - 1];
+    const previous = rows.length > 1 ? rows[rows.length - 2] : null;
+    const meta = BLOOD_NORMALS[type];
+    const changePct = previous ? pctChange(recent.value, previous.value) : null;
+    const normalPct = meta ? pctChange(recent.value, meta.normal) : null;
+    const unit = recent.unit || (meta ? meta.unit : "");
+
+    let movingCloser = null;
+    if (meta && previous) {
+      const distBefore = Math.abs(previous.value - meta.normal);
+      const distAfter = Math.abs(recent.value - meta.normal);
+      if (distAfter < distBefore) movingCloser = true;
+      else if (distAfter > distBefore) movingCloser = false;
+    }
+    const isBigMove = changePct !== null && Math.abs(changePct) > 20;
+    const rowFlagged = isBigMove && movingCloser === false;
+
+    return { type, unit, byDate, recent, previous, meta, changePct, normalPct, movingCloser, rowFlagged };
+  }), [types, grouped]);
+
+  // "Type" gets a width that fits the longest label here; every other column
+  // shares one consistent width, set generously enough for the longest
+  // change/vs-normal value (e.g. "(125.0) (45%)").
+  const typeColWidth = useMemo(() => {
+    let chars = 4;
+    rowData.forEach(r => {
+      const label = `${r.type}${r.unit ? ` (${r.unit})` : ""}`;
+      chars = Math.max(chars, label.length);
+    });
+    return `${chars + 2}ch`;
+  }, [rowData]);
+  const otherColWidth = "108px";
+
+  function getSortValue(r, key) {
+    if (key === "type") return r.type;
+    if (key === "change") return r.changePct;
+    if (key === "normal") return r.meta ? r.meta.normal : null;
+    if (key === "vsNormal") return r.normalPct;
+    return r.byDate[key] !== undefined ? r.byDate[key] : null; // a date column
+  }
+
+  const displayRows = useMemo(() => {
+    const filtered = filterType ? rowData.filter(r => r.type === filterType) : rowData;
+    return [...filtered].sort((a, b) => {
+      const av = getSortValue(a, sortKey), bv = getSortValue(b, sortKey);
+      if (sortKey === "type") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+      const aMissing = av === null || av === undefined;
+      const bMissing = bv === null || bv === undefined;
+      if (aMissing && bMissing) return 0;
+      if (aMissing) return 1; // missing values always sink to the bottom
+      if (bMissing) return -1;
+      return sortDir === "asc" ? av - bv : bv - av;
+    });
+  }, [rowData, filterType, sortKey, sortDir]);
+
+  function handleSort(key) {
+    if (sortKey === key) setSortDir(d => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  }
+
+  function SortableTh({ label, sortKeyName, width, sticky }) {
+    const active = sortKey === sortKeyName;
+    return (
+      <th
+        onClick={() => handleSort(sortKeyName)}
+        style={{
+          ...thStyle, textAlign: sticky ? "left" : "center", width, minWidth: width, maxWidth: width,
+          cursor: "pointer", userSelect: "none",
+          ...(sticky ? { position: "sticky", left: 0, background: T.paper, zIndex: 3 } : {}),
+        }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+          {label}
+          {active && (sortDir === "asc" ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}
+        </span>
+      </th>
+    );
+  }
+
+  if (types.length === 0) {
+    return <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>No results recorded yet.</div>;
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 11.5, color: T.inkSoft, marginBottom: 12, lineHeight: 1.5 }}>
+        Each date a result was recorded is shown across the top. "Change" compares the most recent result with the
+        one before it; "vs normal" compares it with the typical normal value. Green means the most recent result
+        moved closer to normal, red means it moved further away. A whole row is highlighted when that move away
+        from normal is more than 20% — a prompt to take a closer look, not a clinical judgement. Tap a column
+        heading to sort by it, or tap a type's name to pop open its trend chart.
+      </div>
+      <div style={{ marginBottom: 14, maxWidth: 260 }}>
+        <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Filter by type</div>
+        <select className="tt-select" value={filterType} onChange={e => setFilterType(e.target.value)} style={inputStyle}>
+          <option value="">All types</option>
+          {types.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12 }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 12.5, tableLayout: "fixed" }}>
+          <thead>
+            <tr style={{ background: T.paper, textAlign: "left" }}>
+              <SortableTh label="Type" sortKeyName="type" width={typeColWidth} sticky />
+              {allDates.map(d => <SortableTh key={d} label={fmtShortDate(d)} sortKeyName={d} width={otherColWidth} />)}
+              <SortableTh label="Change" sortKeyName="change" width={otherColWidth} />
+              <SortableTh label="Normal" sortKeyName="normal" width={otherColWidth} />
+              <SortableTh label="vs normal" sortKeyName="vsNormal" width={otherColWidth} />
+            </tr>
+          </thead>
+          <tbody>
+            {displayRows.map(r => {
+              const { type, unit, byDate, recent, previous, meta, changePct, normalPct, movingCloser, rowFlagged } = r;
+              const movementColor = movingCloser === true ? T.ok : movingCloser === false ? T.breach : T.ink;
+              const rowStyle = rowFlagged
+                ? { borderTop: `1px solid ${T.lineSoft}`, background: T.warnBg, fontWeight: 700 }
+                : { borderTop: `1px solid ${T.lineSoft}` };
+
+              return (
+                <tr key={type} style={rowStyle}>
+                  <td
+                    onClick={() => setModalChartType(type)}
+                    title="Click to view chart"
+                    style={{
+                      ...tdStyle, fontWeight: rowFlagged ? 700 : 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                      width: typeColWidth, minWidth: typeColWidth, maxWidth: typeColWidth, cursor: "pointer",
+                      position: "sticky", left: 0, background: rowFlagged ? T.warnBg : T.card, zIndex: 2,
+                    }}
+                  >
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                      <TrendingUp size={11} style={{ color: T.inkSoft, flexShrink: 0 }} />
+                      {type}{unit && <span style={{ color: T.inkSoft, fontWeight: 400 }}> ({unit})</span>}
+                    </span>
+                  </td>
+                  {allDates.map(d => (
+                    <td key={d} style={{ ...tdStyle, fontFamily: T.mono, textAlign: "center", width: otherColWidth, minWidth: otherColWidth, maxWidth: otherColWidth }}>
+                      {byDate[d] !== undefined ? byDate[d] : "—"}
+                    </td>
+                  ))}
+                  <td style={{ ...tdStyle, fontFamily: T.mono, textAlign: "center", whiteSpace: "nowrap", width: otherColWidth, minWidth: otherColWidth, maxWidth: otherColWidth, color: movementColor, fontWeight: rowFlagged ? 700 : 400 }}>
+                    {previous ? fmtDelta(recent.value - previous.value, changePct) : "—"}
+                  </td>
+                  <td style={{ ...tdStyle, fontFamily: T.mono, textAlign: "center", width: otherColWidth, minWidth: otherColWidth, maxWidth: otherColWidth }}>{meta ? meta.normal : "—"}</td>
+                  <td style={{ ...tdStyle, fontFamily: T.mono, textAlign: "center", whiteSpace: "nowrap", width: otherColWidth, minWidth: otherColWidth, maxWidth: otherColWidth, color: movementColor, fontWeight: rowFlagged ? 700 : 400 }}>
+                    {meta ? fmtDelta(recent.value - meta.normal, normalPct) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {filterType && <BloodsInlineChart bloodsEntries={bloodsEntries} type={filterType} />}
+      {modalChartType && <BloodsChartModal bloodsEntries={bloodsEntries} type={modalChartType} onClose={() => setModalChartType(null)} />}
+    </div>
+  );
+}
+
+function BloodsTrendChartBody({ bloodsEntries, type }) {
+  const chartData = useMemo(() => {
+    return bloodsEntries
+      .filter(e => e.description === type && !isNaN(parseFloat(e.score)))
+      .map(e => ({ date: e.date, [type]: parseFloat(e.score) }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [bloodsEntries, type]);
+  const meta = BLOOD_NORMALS[type];
+
+  if (chartData.length === 0) {
+    return <div style={{ padding: "20px 0", textAlign: "center", color: T.inkSoft, fontSize: 13 }}>No results recorded yet for {type}.</div>;
+  }
+
+  return (
+    <>
+      <ResponsiveContainer width="100%" height={260}>
+        <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={T.lineSoft} />
+          <XAxis dataKey="date" tick={{ fontSize: 11, fill: T.inkSoft }} tickFormatter={fmtDate} />
+          <YAxis tick={{ fontSize: 11, fill: T.inkSoft }} />
+          <Tooltip labelFormatter={fmtDate} contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.line}` }} />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          {meta && (
+            <ReferenceLine
+              y={meta.normal} stroke={T.inkSoft} strokeDasharray="5 4"
+              label={{ value: "Typical normal", position: "insideTopRight", fill: T.inkSoft, fontSize: 11 }}
+            />
+          )}
+          <Line type="monotone" dataKey={type} stroke={LINE_COLORS[0]} connectNulls dot={{ r: 3 }} strokeWidth={2} name={type} />
+        </LineChart>
+      </ResponsiveContainer>
+      {meta && (
+        <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 10 }}>
+          Dashed line shows a typical normal reference value for {type} ({meta.range}). Reference ranges vary by
+          lab, age and sex — always check the range printed on the actual lab report.
+        </div>
+      )}
+    </>
+  );
+}
+
+// Shown below the table when a type is chosen via the dropdown (which also
+// filters the table down to that one row).
+function BloodsInlineChart({ bloodsEntries, type }) {
+  return (
+    <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16, marginTop: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}>
+        <TrendingUp size={15} /> Trend — {type}
+      </div>
+      <BloodsTrendChartBody bloodsEntries={bloodsEntries} type={type} />
+    </div>
+  );
+}
+
+// Shown as a popup when a type is clicked directly in the table — the table
+// itself (and the dropdown) stay exactly as they were.
+function BloodsChartModal({ bloodsEntries, type, onClose }) {
+  return (
+    <ModalShell title={`Trend — ${type}`} onClose={onClose} width={520}>
+      <BloodsTrendChartBody bloodsEntries={bloodsEntries} type={type} />
+    </ModalShell>
   );
 }
 
@@ -1748,90 +2470,25 @@ function BloodElementPanel({ elementName, meta, isOther, entries, onAdd, onDelet
   );
 }
 
-function BloodsChartPanel({ bloodsEntries }) {
-  const seriesNames = useMemo(
-    () => Array.from(new Set(bloodsEntries.filter(e => !isNaN(parseFloat(e.score))).map(e => e.description))),
-    [bloodsEntries]
-  );
-
-  // Nothing selected by default — the user picks one measurement to view.
-  const [selectedMetric, setSelectedMetric] = useState("");
-  const normal = selectedMetric ? BLOOD_NORMALS[selectedMetric] : null;
-
-  // Scoped to just this metric's own entries, sorted oldest-to-newest — so the
-  // x-axis naturally starts at that metric's earliest recorded date rather
-  // than the earliest date across every measurement in Bloods.
-  const chartData = useMemo(() => {
-    if (!selectedMetric) return [];
-    return bloodsEntries
-      .filter(e => e.description === selectedMetric && !isNaN(parseFloat(e.score)))
-      .map(e => ({ date: e.date, [selectedMetric]: parseFloat(e.score) }))
-      .sort((a, b) => a.date.localeCompare(b.date));
-  }, [bloodsEntries, selectedMetric]);
-
-  if (seriesNames.length === 0) {
-    return <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>No results recorded yet — add some from the Haematology or Biochemistry tabs above.</div>;
-  }
-
-  return (
-    <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}><TrendingUp size={15} /> Trend over time</div>
-      <div style={{ marginBottom: 16, maxWidth: 320 }}>
-        <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Measurement</div>
-        <select className="tt-select" value={selectedMetric} onChange={e => setSelectedMetric(e.target.value)} style={inputStyle}>
-          <option value="">Select a measurement…</option>
-          {seriesNames.map(name => <option key={name} value={name}>{name}</option>)}
-        </select>
-      </div>
-
-      {!selectedMetric ? (
-        <div style={{ padding: "30px 0", textAlign: "center", color: T.inkSoft, fontSize: 13 }}>Choose a measurement above to see its trend.</div>
-      ) : (
-        <>
-          <ResponsiveContainer width="100%" height={280}>
-            <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={T.lineSoft} />
-              <XAxis dataKey="date" tick={{ fontSize: 11, fill: T.inkSoft }} tickFormatter={fmtDate} />
-              <YAxis tick={{ fontSize: 11, fill: T.inkSoft }} />
-              <Tooltip labelFormatter={fmtDate} contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.line}` }} />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              {normal && (
-                <ReferenceLine
-                  y={normal.normal} stroke={T.inkSoft} strokeDasharray="5 4"
-                  label={{ value: "Typical normal", position: "insideTopRight", fill: T.inkSoft, fontSize: 11 }}
-                />
-              )}
-              <Line type="monotone" dataKey={selectedMetric} stroke={LINE_COLORS[0]} connectNulls dot={{ r: 3 }} strokeWidth={2} name={selectedMetric} />
-            </LineChart>
-          </ResponsiveContainer>
-          {normal && (
-            <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 10 }}>
-              Dashed line shows a typical normal reference value for {selectedMetric} ({normal.range}). Reference
-              ranges vary by lab, age and sex — always check the range printed on the actual lab report.
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
 // ================= MEASUREMENTS TAB =================
 function MeasurementsTab({ measurementsEntries, setMeasurementsEntries, canEdit = true }) {
-  const [sub, setSub] = useState("chart");
+  const [sub, setSub] = useState("summarytable");
 
-  function addEntry(entry) { setMeasurementsEntries(prev => [...prev, { id: uid(), ...entry }]); }
+  function addEntry(entry) {
+    setMeasurementsEntries(prev => [...prev, { id: uid(), ...entry }]);
+    notifyHousehold({ title: "🩻 New measurement added", body: `${entry.description}: ${entry.score}${entry.unit ? ` ${entry.unit}` : ""}` });
+  }
   function deleteEntry(id) { setMeasurementsEntries(prev => prev.filter(e => e.id !== id)); }
 
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
-        <button className="tt-btn" onClick={() => setSub("chart")} style={{
-          background: sub === "chart" ? T.navy : T.card, color: sub === "chart" ? "#fff" : T.ink,
-          border: `1px solid ${sub === "chart" ? T.navy : T.line}`, borderRadius: 20, padding: "8px 16px",
+        <button className="tt-btn" onClick={() => setSub("summarytable")} style={{
+          background: sub === "summarytable" ? T.navy : T.card, color: sub === "summarytable" ? "#fff" : T.ink,
+          border: `1px solid ${sub === "summarytable" ? T.navy : T.line}`, borderRadius: 20, padding: "8px 16px",
           fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6,
         }}>
-          <TrendingUp size={13} /> Chart
+          <List size={13} /> Summary
         </button>
         <button className="tt-btn" onClick={() => setSub("entry")} style={{
           background: sub === "entry" ? T.navy : T.card, color: sub === "entry" ? "#fff" : T.ink,
@@ -1842,7 +2499,7 @@ function MeasurementsTab({ measurementsEntries, setMeasurementsEntries, canEdit 
         </button>
       </div>
 
-      {sub === "chart" && <MeasurementsChartPanel entries={measurementsEntries} />}
+      {sub === "summarytable" && <MeasurementsSummaryTable entries={measurementsEntries} />}
       {sub === "entry" && <MeasurementsEntryPanel entries={measurementsEntries} onAdd={addEntry} onDelete={deleteEntry} canEdit={canEdit} />}
     </div>
   );
@@ -1909,60 +2566,220 @@ function MeasurementsEntryPanel({ entries, onAdd, onDelete, canEdit = true }) {
   );
 }
 
-function MeasurementsChartPanel({ entries }) {
-  const seriesNames = useMemo(
-    () => Array.from(new Set(entries.filter(e => !isNaN(parseFloat(e.score))).map(e => e.description))),
-    [entries]
+function MeasurementsPointDot(props) {
+  const { cx, cy, payload } = props;
+  if (cx == null || cy == null) return null;
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={3.5} fill={LINE_COLORS[0]} stroke={T.card} strokeWidth={1} />
+      <text x={cx} y={cy - 9} textAnchor="middle" fontSize={9.5} fill={T.inkSoft}>{payload.type}</text>
+    </g>
   );
+}
 
-  // Nothing selected by default — the user picks one scan type to view.
-  const [selectedMetric, setSelectedMetric] = useState("");
+function MeasurementsSummaryTable({ entries }) {
+  const grouped = useMemo(() => {
+    const map = {};
+    entries.forEach(e => {
+      const v = parseFloat(e.score);
+      if (isNaN(v)) return;
+      if (!map[e.description]) map[e.description] = [];
+      map[e.description].push({ date: e.date, value: v, unit: e.unit || "mm" });
+    });
+    Object.values(map).forEach(arr => arr.sort((a, b) => a.date.localeCompare(b.date)));
+    return map;
+  }, [entries]);
 
-  // Scoped to just this scan type's own entries, sorted oldest-to-newest — so
-  // the x-axis naturally starts at its earliest recorded date rather than the
-  // earliest date across every scan type.
-  const chartData = useMemo(() => {
-    if (!selectedMetric) return [];
+  const types = useMemo(() => {
+    return Object.keys(grouped).sort((a, b) => {
+      const ia = SCAN_TYPES.indexOf(a), ib = SCAN_TYPES.indexOf(b);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return a.localeCompare(b);
+    });
+  }, [grouped]);
+
+  const allDates = useMemo(() => {
+    const s = new Set();
+    Object.values(grouped).forEach(arr => arr.forEach(r => s.add(r.date)));
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
+  }, [grouped]);
+
+  const [filterType, setFilterType] = useState("");
+  const [sortKey, setSortKey] = useState("type");
+  const [sortDir, setSortDir] = useState("asc");
+
+  function pctChange(newV, oldV) {
+    if (!oldV) return null;
+    return ((newV - oldV) / Math.abs(oldV)) * 100;
+  }
+  function fmtDelta(diff, pct) {
+    const diffStr = diff < 0 ? `(${Math.abs(diff).toFixed(1)})` : diff.toFixed(1);
+    const pctStr = pct < 0 ? `(${Math.abs(pct).toFixed(0)}%)` : `${pct.toFixed(0)}%`;
+    return `${diffStr} ${pctStr}`;
+  }
+
+  const rowData = useMemo(() => types.map(type => {
+    const rows = grouped[type];
+    const byDate = Object.fromEntries(rows.map(r => [r.date, r.value]));
+    const recent = rows[rows.length - 1];
+    const previous = rows.length > 1 ? rows[rows.length - 2] : null;
+    const changePct = previous ? pctChange(recent.value, previous.value) : null;
+    const unit = recent.unit;
+    return { type, unit, byDate, recent, previous, changePct };
+  }), [types, grouped]);
+
+  const typeColWidth = useMemo(() => {
+    let chars = 4;
+    rowData.forEach(r => {
+      const label = `${r.type}${r.unit ? ` (${r.unit})` : ""}`;
+      chars = Math.max(chars, label.length);
+    });
+    return `${chars + 2}ch`;
+  }, [rowData]);
+  const otherColWidth = "100px";
+
+  function getSortValue(r, key) {
+    if (key === "type") return r.type;
+    if (key === "change") return r.changePct;
+    return r.byDate[key] !== undefined ? r.byDate[key] : null;
+  }
+
+  const displayRows = useMemo(() => {
+    const filtered = filterType ? rowData.filter(r => r.type === filterType) : rowData;
+    return [...filtered].sort((a, b) => {
+      const av = getSortValue(a, sortKey), bv = getSortValue(b, sortKey);
+      if (sortKey === "type") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+      const aMissing = av === null || av === undefined;
+      const bMissing = bv === null || bv === undefined;
+      if (aMissing && bMissing) return 0;
+      if (aMissing) return 1;
+      if (bMissing) return -1;
+      return sortDir === "asc" ? av - bv : bv - av;
+    });
+  }, [rowData, filterType, sortKey, sortDir]);
+
+  function handleSort(key) {
+    if (sortKey === key) setSortDir(d => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  }
+
+  function SortableTh({ label, sortKeyName, width, sticky }) {
+    const active = sortKey === sortKeyName;
+    return (
+      <th
+        onClick={() => handleSort(sortKeyName)}
+        style={{
+          ...thStyle, textAlign: sticky ? "left" : "center", width, minWidth: width, maxWidth: width,
+          cursor: "pointer", userSelect: "none",
+          ...(sticky ? { position: "sticky", left: 0, background: T.paper, zIndex: 3 } : {}),
+        }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+          {label}
+          {active && (sortDir === "asc" ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}
+        </span>
+      </th>
+    );
+  }
+
+  // The combined chart always shows every measurement, regardless of the
+  // table's filter — one continuous line ordered by date, each point
+  // labelled with its scan type.
+  const combinedChartData = useMemo(() => {
     return entries
-      .filter(e => e.description === selectedMetric && !isNaN(parseFloat(e.score)))
-      .map(e => ({ date: e.date, [selectedMetric]: parseFloat(e.score) }))
+      .filter(e => !isNaN(parseFloat(e.score)))
+      .map(e => ({ date: e.date, value: parseFloat(e.score), type: e.description }))
       .sort((a, b) => a.date.localeCompare(b.date));
-  }, [entries, selectedMetric]);
+  }, [entries]);
 
-  if (seriesNames.length === 0) {
+  if (types.length === 0) {
     return <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>No measurements recorded yet — add some from the Add Measurement tab above.</div>;
   }
 
   return (
-    <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}><TrendingUp size={15} /> Trend over time</div>
-      <div style={{ marginBottom: 16, maxWidth: 320 }}>
-        <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Scan type</div>
-        <select className="tt-select" value={selectedMetric} onChange={e => setSelectedMetric(e.target.value)} style={inputStyle}>
-          <option value="">Select a scan type…</option>
-          {seriesNames.map(name => <option key={name} value={name}>{name}</option>)}
+    <div>
+      <div style={{ fontSize: 11.5, color: T.inkSoft, marginBottom: 12, lineHeight: 1.5 }}>
+        Each date a measurement was recorded is shown across the top. "Change" compares the most recent
+        measurement of that scan type with the one before it. Tap a column heading to sort by it.
+      </div>
+      <div style={{ marginBottom: 14, maxWidth: 260 }}>
+        <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Filter by type</div>
+        <select className="tt-select" value={filterType} onChange={e => setFilterType(e.target.value)} style={inputStyle}>
+          <option value="">All types</option>
+          {types.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
+      <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, marginBottom: 20 }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 12.5, tableLayout: "fixed" }}>
+          <thead>
+            <tr style={{ background: T.paper, textAlign: "left" }}>
+              <SortableTh label="Type" sortKeyName="type" width={typeColWidth} sticky />
+              {allDates.map(d => <SortableTh key={d} label={fmtShortDate(d)} sortKeyName={d} width={otherColWidth} />)}
+              <SortableTh label="Change" sortKeyName="change" width={otherColWidth} />
+            </tr>
+          </thead>
+          <tbody>
+            {displayRows.map(r => {
+              const { type, unit, byDate, recent, previous, changePct } = r;
+              return (
+                <tr key={type} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
+                  <td style={{
+                    ...tdStyle, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                    width: typeColWidth, minWidth: typeColWidth, maxWidth: typeColWidth,
+                    position: "sticky", left: 0, background: T.card, zIndex: 2,
+                  }}>
+                    {type}{unit && <span style={{ color: T.inkSoft, fontWeight: 400 }}> ({unit})</span>}
+                  </td>
+                  {allDates.map(d => (
+                    <td key={d} style={{ ...tdStyle, fontFamily: T.mono, textAlign: "center", width: otherColWidth, minWidth: otherColWidth, maxWidth: otherColWidth }}>
+                      {byDate[d] !== undefined ? byDate[d] : "—"}
+                    </td>
+                  ))}
+                  <td style={{ ...tdStyle, fontFamily: T.mono, textAlign: "center", whiteSpace: "nowrap", width: otherColWidth, minWidth: otherColWidth, maxWidth: otherColWidth }}>
+                    {previous ? fmtDelta(recent.value - previous.value, changePct) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
-      {!selectedMetric ? (
-        <div style={{ padding: "30px 0", textAlign: "center", color: T.inkSoft, fontSize: 13 }}>Choose a scan type above to see its trend.</div>
-      ) : (
+      <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}>
+          <TrendingUp size={15} /> Trend over time — all scan types
+        </div>
         <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+          <LineChart data={combinedChartData} margin={{ top: 24, right: 20, left: 0, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={T.lineSoft} />
             <XAxis dataKey="date" tick={{ fontSize: 11, fill: T.inkSoft }} tickFormatter={fmtDate} />
             <YAxis tick={{ fontSize: 11, fill: T.inkSoft }} />
-            <Tooltip labelFormatter={fmtDate} contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.line}` }} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Line type="monotone" dataKey={selectedMetric} stroke={LINE_COLORS[0]} connectNulls dot={{ r: 3 }} strokeWidth={2} name={selectedMetric} />
+            <Tooltip labelFormatter={fmtDate} formatter={(value, _name, item) => [value, item.payload.type]} contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${T.line}` }} />
+            <Line type="monotone" dataKey="value" stroke={LINE_COLORS[0]} connectNulls strokeWidth={2} dot={<MeasurementsPointDot />} name="Measurement" />
           </LineChart>
         </ResponsiveContainer>
-      )}
+        <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 10 }}>
+          Every measurement is plotted on one line in date order, labelled with its scan type — helpful for
+          seeing the overall trend even when different types of scan are used at different points.
+        </div>
+      </div>
     </div>
   );
 }
-const thStyle = { padding: "9px 14px", fontSize: 11, fontWeight: 700, color: T.inkSoft, textTransform: "uppercase", letterSpacing: 0.3 };
-const tdStyle = { padding: "9px 14px", color: T.ink };
+
+function buildThStyle() { return { padding: "9px 14px", fontSize: 11, fontWeight: 700, color: T.inkSoft, textTransform: "uppercase", letterSpacing: 0.3 }; }
+function buildTdStyle() { return { padding: "9px 14px", color: T.ink }; }
+const thStyle = buildThStyle();
+const tdStyle = buildTdStyle();
+
+// Now that every theme-derived style object has been declared, apply
+// whatever was saved before the very first render, so there's no light-mode
+// flash for someone who has dark mode saved (index.html also does a quicker,
+// cruder version of this before React even loads, to avoid a flash at the
+// HTML/CSS level too).
+applyThemeMode(getStoredThemeMode());
 
 // ================= APPOINTMENTS TAB =================
 function AppointmentsTab({ appointments, setAppointments, view, setView, canEdit = true }) {
@@ -1976,6 +2793,7 @@ function AppointmentsTab({ appointments, setAppointments, view, setView, canEdit
   const byDate = useMemo(() => {
     const m = {};
     appointments.forEach(a => { (m[a.date] = m[a.date] || []).push(a); });
+    Object.values(m).forEach(arr => arr.sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99")));
     return m;
   }, [appointments]);
 
@@ -1983,6 +2801,7 @@ function AppointmentsTab({ appointments, setAppointments, view, setView, canEdit
     const id = uid();
     setAppointments(prev => [...prev, { id, history: [], summary: [], ...a }]);
     setFormOpen(false);
+    notifyHousehold({ title: "📅 New appointment added", body: `${a.name || a.role || "Appointment"} on ${fmtDate(a.date)}` });
     if (a.notes && a.notes.trim()) {
       const bullets = await summariseNotes(a.notes);
       setAppointments(prev => prev.map(x => (x.id === id ? { ...x, summary: bullets } : x)));
@@ -2091,16 +2910,16 @@ function AppointmentChip({ a, onClick }) {
   const rs = ROLE_STYLES[a.role] || ROLE_STYLES.Other;
   return (
     <div draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", a.id)} onClick={onClick}
-      title={`${a.name || ""} — ${a.role || ""}`}
+      title={`${a.name || ""}${a.time ? ` at ${a.time}` : ""} — ${a.role || ""}`}
       style={{ background: rs.bg, borderLeft: `3px solid ${rs.border}`, color: rs.text, borderRadius: 6, padding: "4px 6px", fontSize: 10.5, lineHeight: 1.3, cursor: "grab", display: "flex", flexDirection: "column", gap: 1 }}>
-      <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{apptTitle(a)}</div>
+      <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.time ? `${a.time} · ` : ""}{apptTitle(a)}</div>
       {a.name && a.name.trim() && <span style={{ alignSelf: "flex-start", opacity: 0.85, fontSize: 9.5, fontWeight: 700 }}>{a.role || "Other"}</span>}
     </div>
   );
 }
 
 function AppointmentNotesSummary({ appointments, onUpdate, onRowClick }) {
-  const sorted = useMemo(() => [...appointments].sort((a, b) => b.date.localeCompare(a.date)), [appointments]);
+  const sorted = useMemo(() => [...appointments].sort((a, b) => b.date.localeCompare(a.date) || (b.time || "").localeCompare(a.time || "")), [appointments]);
   const [regenerating, setRegenerating] = useState(null);
 
   async function regenerate(a) {
@@ -2123,7 +2942,7 @@ function AppointmentNotesSummary({ appointments, onUpdate, onRowClick }) {
           <div key={a.id} style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
               <div onClick={() => onRowClick(a)} style={{ cursor: "pointer" }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: T.ink, fontFamily: T.mono }}>{fmtDate(a.date)}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: T.ink, fontFamily: T.mono }}>{fmtDate(a.date)}{a.time ? ` · ${a.time}` : ""}</div>
                 <div style={{ fontSize: 13, color: T.inkSoft, marginTop: 2 }}>
                   with <strong style={{ color: T.ink }}>{apptTitle(a)}</strong>{" "}
                   {a.name && a.name.trim() && (
@@ -2159,13 +2978,17 @@ function AppointmentNotesSummary({ appointments, onUpdate, onRowClick }) {
 
 function AddAppointmentModal({ defaultDate, onClose, onSave }) {
   const [date, setDate] = useState(defaultDate);
+  const [time, setTime] = useState("");
   const [name, setName] = useState("");
   const [role, setRole] = useState("Consultant");
   const [notes, setNotes] = useState("");
 
   return (
     <ModalShell title="Add appointment" onClose={onClose}>
-      <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} /></Field>
+      <div className="tt-2col">
+        <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} /></Field>
+        <Field label="Time (optional)"><input type="time" value={time} onChange={e => setTime(e.target.value)} style={inputStyle} /></Field>
+      </div>
       <Field label="Name"><input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Dr Sarah Chen" style={inputStyle} /></Field>
       <Field label="Job role">
         <select className="tt-select" value={role} onChange={e => setRole(e.target.value)} style={inputStyle}>
@@ -2173,7 +2996,7 @@ function AddAppointmentModal({ defaultDate, onClose, onSave }) {
         </select>
       </Field>
       <Field label="Notes from appointment (optional)"><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={4} style={{ ...inputStyle, resize: "vertical" }} /></Field>
-      <button className="tt-btn" onClick={() => onSave({ date, name, role, notes })}
+      <button className="tt-btn" onClick={() => onSave({ date, time, name, role, notes })}
         style={{ width: "100%", background: T.accent, color: "#fff", padding: "11px", borderRadius: 9, fontSize: 13.5, fontWeight: 600, marginTop: 4 }}>
         Save appointment
       </button>
@@ -2186,6 +3009,7 @@ function EditAppointmentModal({ a, onClose, onSave, onDelete, canEdit = true }) 
   const [role, setRole] = useState(a.role || "Consultant");
   const [notes, setNotes] = useState(a.notes || "");
   const [date, setDate] = useState(a.date);
+  const [time, setTime] = useState(a.time || "");
   const [summarising, setSummarising] = useState(false);
 
   async function handleSave() {
@@ -2193,15 +3017,18 @@ function EditAppointmentModal({ a, onClose, onSave, onDelete, canEdit = true }) 
       setSummarising(true);
       const bullets = await summariseNotes(notes);
       setSummarising(false);
-      onSave({ name, role, notes, date, summary: bullets });
+      onSave({ name, role, notes, date, time, summary: bullets });
     } else {
-      onSave({ name, role, notes, date });
+      onSave({ name, role, notes, date, time });
     }
   }
 
   return (
     <ModalShell title={`${apptTitle(a)} — ${fmtDate(a.date)}`} onClose={onClose}>
-      <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
+      <div className="tt-2col">
+        <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
+        <Field label="Time (optional)"><input type="time" value={time} onChange={e => setTime(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
+      </div>
       <Field label="Name"><input value={name} onChange={e => setName(e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
       <Field label="Job role">
         <select className="tt-select" value={role} onChange={e => setRole(e.target.value)} disabled={!canEdit} style={inputStyle}>
@@ -2384,7 +3211,7 @@ function GuidanceTab() {
             <ol style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 4 }}>
               <li>Make sure you're on the Calendar view (toggle at the top).</li>
               <li>Tap the date you want, or tap "Add treatment".</li>
-              <li>Choose the type (Chemotherapy, Immunotherapy, Surgery, or Radiotherapy), and fill in drug(s), dose, cycle and day as needed.</li>
+              <li>Choose the type (Chemotherapy, Immunotherapy, Surgery, or Radiotherapy), and fill in a time (optional), drug(s), dose, cycle and day as needed.</li>
               <li>Save — it'll appear as a chip on that date.</li>
             </ol>
             <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6 }}>
@@ -2398,7 +3225,7 @@ function GuidanceTab() {
             <div style={{ fontWeight: 700, color: T.ink, marginBottom: 6 }}>Appointments</div>
             <ol style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 4 }}>
               <li>On the Calendar view, tap the date of the appointment, or tap "Add appointment".</li>
-              <li>Enter who it's with and their role (Consultant, Registrar, Surgeon, or Other).</li>
+              <li>Enter who it's with, their role (Consultant, Registrar, Surgeon, or Other), and a time if you have one.</li>
               <li>Add any notes from the appointment — these get automatically condensed into a few key bullet points.</li>
               <li>Save — it'll appear as a chip on that date, same as the Treatment Calendar.</li>
             </ol>
@@ -2416,8 +3243,11 @@ function GuidanceTab() {
               <li>Save — it's added to that element's history.</li>
             </ol>
             <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6 }}>
-              Use the Chart tab and pick one element from the dropdown to see its trend over time, shown against a
-              typical normal range for reference.
+              The Summary tab lays out every result in a table — one row per element, one column per test date —
+              with the change since the last result and the change against the normal range worked out
+              automatically, and anything moving by more than 20% highlighted. Tap a column heading to sort by it.
+              Tap a type's name to pop open its trend chart. Pick a type from the dropdown instead to filter the
+              table down to just that row, with its chart shown underneath.
             </div>
           </div>
 
@@ -2429,7 +3259,57 @@ function GuidanceTab() {
               <li>Save — it's added to that scan type's history.</li>
             </ol>
             <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6 }}>
-              Use the Chart tab and pick one scan type from the dropdown to see its trend over time.
+              The Summary tab lays out every measurement in a table — one row per scan type, one column per date —
+              with the change since the last measurement of that type worked out automatically. Tap a column
+              heading to sort by it, or use the dropdown to filter the table to one type. A chart underneath
+              always shows every measurement plotted on a single line in date order, each point labelled with its
+              scan type.
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 700, color: T.ink, marginBottom: 6 }}>Prescriptions</div>
+            <ol style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 4 }}>
+              <li>Tap "Add prescription".</li>
+              <li>Enter the medication name, and optionally link it to a specific treatment from the calendar (e.g. "the first chemo in Cycle 3") — this sets a sensible starting date automatically, which you can still adjust.</li>
+              <li>Choose a fixed course (a set number of doses, e.g. 5× Filgrastim) or a tapering course (e.g. a steroid reducing from 12mg to 10mg to 8mg over several stages), and fill in the details.</li>
+              <li>Save — the day-by-day schedule is worked out automatically.</li>
+            </ol>
+            <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6 }}>
+              Tap a prescription to expand it and see the full schedule. This is a planning aid — always follow the
+              dose and timing given by your care team.
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 700, color: T.ink, marginBottom: 6 }}>Nutrition</div>
+            <div style={{ fontSize: 12.5, color: T.inkSoft }}>
+              Pick a blood measurement from the dropdown to see nutrients commonly associated with it, and foods
+              they're found in. This is general reference information, not personalised dietary advice — see the
+              note at the top of that tab.
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 700, color: T.ink, marginBottom: 6 }}>Side Effects</div>
+            <div style={{ fontSize: 12.5, color: T.inkSoft }}>
+              Shows common side effects specific to whatever's actually been typed into Treatment Calendar's
+              drug(s) field and Prescriptions — recognised drugs get their own card; anything not recognised falls
+              back to a general list for that treatment type. General reference information, not medical advice —
+              see the note at the top of that tab, and always ask your care team what to expect.
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 700, color: T.ink, marginBottom: 6 }}>Insights</div>
+            <div style={{ fontSize: 12.5, color: T.inkSoft }}>
+              Tap "Find patterns" to scan the treatments, prescriptions, and blood results already logged
+              elsewhere in the app for anything that recurs — e.g. a blood measurement that consistently moves in
+              the days after a particular drug. It needs at least two occurrences of the same trigger to show
+              anything at all. These are statistical patterns in your own small dataset, not a diagnosis or proof
+              that one thing causes another — always mention anything notable to your care team. An optional "Ask
+              AI to explain" button turns the raw findings into a plain-English summary if an AI key has been set
+              up (see the README) — without one, the findings are still shown, just without that extra narrative.
             </div>
           </div>
 
@@ -2440,6 +3320,10 @@ function GuidanceTab() {
           <div>
             <strong>Settings → Patient Data</strong> — name, date of birth, address, height and weight, shown
             throughout the app.
+          </div>
+          <div>
+            <strong>Settings → Appearance</strong> — switch between light and dark mode. This is saved per
+            device, not per person, so everyone using the app chooses their own.
           </div>
         </div>
       </GuidanceSection>
@@ -2464,8 +3348,484 @@ function GuidanceTab() {
   );
 }
 
+// ================= PRESCRIPTIONS TAB =================
+function PrescriptionsTab({ prescriptions, setPrescriptions, treatments, canEdit }) {
+  const [formOpen, setFormOpen] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+
+  function addRx(rx) {
+    setPrescriptions(prev => [...prev, { id: uid(), ...rx }]);
+    setFormOpen(false);
+  }
+  function deleteRx(id) {
+    setPrescriptions(prev => prev.filter(r => r.id !== id));
+    setExpandedId(prev => (prev === id ? null : prev));
+  }
+
+  const sortedTreatments = useMemo(() => [...treatments].sort((a, b) => a.date.localeCompare(b.date)), [treatments]);
+  const sorted = useMemo(() => [...prescriptions].sort((a, b) => (b.startDate || "").localeCompare(a.startDate || "")), [prescriptions]);
+
+  return (
+    <div>
+      <div style={{ fontSize: 11.5, color: T.inkSoft, marginBottom: 14, lineHeight: 1.5 }}>
+        Track supportive medications like Filgrastim or steroids, linked to a specific treatment if you like, with
+        the day-by-day schedule worked out automatically. This is a planning aid, not a substitute for the
+        instructions given by your care team — always follow their guidance on dose and timing.
+      </div>
+
+      {canEdit && (
+        <button className="tt-btn" onClick={() => setFormOpen(true)} style={{ background: T.accent, color: "#fff", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6, marginBottom: 16 }}>
+          <Plus size={15} /> Add prescription
+        </button>
+      )}
+
+      {sorted.length === 0 ? (
+        <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>
+          No prescriptions added yet.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {sorted.map(rx => {
+            const expanded = expandedId === rx.id;
+            const schedule = generateRxSchedule(rx);
+            const linked = rx.linkedTreatmentId ? treatments.find(t => t.id === rx.linkedTreatmentId) : null;
+            return (
+              <div key={rx.id} style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, overflow: "hidden" }}>
+                <div onClick={() => setExpandedId(prev => (prev === rx.id ? null : rx.id))} style={{ padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Pill size={14} style={{ color: T.accent, flexShrink: 0 }} />
+                      <strong style={{ fontSize: 13.5, color: T.ink }}>{rx.name}</strong>
+                    </div>
+                    <div style={{ fontSize: 12, color: T.inkSoft, marginTop: 4 }}>{rxSummaryLine(rx)}</div>
+                    {linked && (
+                      <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 4 }}>
+                        Linked to: {linked.type === "Other" ? linked.typeCustom : linked.type}
+                        {linked.cycle ? ` · Cycle ${linked.cycle}` : ""}{linked.day ? ` Day ${linked.day}` : ""} · {fmtDate(linked.date)}
+                      </div>
+                    )}
+                  </div>
+                  {expanded ? <ChevronUp size={16} color={T.inkSoft} style={{ flexShrink: 0 }} /> : <ChevronDown size={16} color={T.inkSoft} style={{ flexShrink: 0 }} />}
+                </div>
+                {expanded && (
+                  <div style={{ padding: "0 14px 14px" }}>
+                    {rx.notes && <div style={{ fontSize: 12.5, color: T.ink, marginBottom: 10, whiteSpace: "pre-wrap" }}>{rx.notes}</div>}
+                    <div className="tt-table-wrap" style={{ border: `1px solid ${T.lineSoft}`, borderRadius: 8 }}>
+                      <table style={{ borderCollapse: "collapse", fontSize: 12.5, width: "100%" }}>
+                        <thead><tr style={{ background: T.paper, textAlign: "left" }}><th style={thStyle}>Date</th><th style={thStyle}>Dose</th></tr></thead>
+                        <tbody>
+                          {schedule.map((s, i) => (
+                            <tr key={i} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
+                              <td style={{ ...tdStyle, fontFamily: T.mono }}>{fmtDate(s.date)}</td>
+                              <td style={tdStyle}>{s.label}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {canEdit && (
+                      <button className="tt-btn" onClick={() => deleteRx(rx.id)} style={{ marginTop: 10, background: "transparent", color: T.breach, fontSize: 11.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 5, padding: "4px 0" }}>
+                        <Trash2 size={12} /> Delete
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {formOpen && canEdit && (
+        <AddPrescriptionModal treatments={sortedTreatments} onClose={() => setFormOpen(false)} onSave={addRx} />
+      )}
+    </div>
+  );
+}
+
+function AddPrescriptionModal({ treatments, onClose, onSave }) {
+  const [name, setName] = useState("");
+  const [linkedTreatmentId, setLinkedTreatmentId] = useState("");
+  const [courseType, setCourseType] = useState("fixed");
+  const [startDate, setStartDate] = useState(todayStr());
+  const [doseCount, setDoseCount] = useState("5");
+  const [frequency, setFrequency] = useState("Once daily");
+  const [stages, setStages] = useState([{ dose: "12", unit: "mg", days: "5" }]);
+  const [notes, setNotes] = useState("");
+
+  function handleLinkChange(id) {
+    setLinkedTreatmentId(id);
+    const t = treatments.find(tr => tr.id === id);
+    if (t) setStartDate(addDaysToDate(t.date, 1));
+  }
+  function addStage() { setStages(prev => [...prev, { dose: "", unit: "mg", days: "" }]); }
+  function updateStage(i, field, val) { setStages(prev => prev.map((s, idx) => (idx === i ? { ...s, [field]: val } : s))); }
+  function removeStage(i) { setStages(prev => prev.filter((_, idx) => idx !== i)); }
+
+  function handleSave() {
+    if (!name.trim()) return;
+    const rx = { name: name.trim(), linkedTreatmentId: linkedTreatmentId || null, courseType, startDate, notes };
+    if (courseType === "fixed") {
+      rx.doseCount = parseInt(doseCount, 10) || 0;
+      rx.frequency = frequency;
+    } else {
+      rx.stages = stages
+        .map(s => ({ dose: parseFloat(s.dose) || 0, unit: s.unit || "mg", days: parseInt(s.days, 10) || 0 }))
+        .filter(s => s.days > 0);
+    }
+    onSave(rx);
+  }
+
+  return (
+    <ModalShell title="Add prescription" onClose={onClose}>
+      <Field label="Medication name">
+        <input list="rxSuggestions" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Filgrastim" style={inputStyle} />
+        <datalist id="rxSuggestions">{PRESCRIPTION_SUGGESTIONS.map(s => <option key={s} value={s} />)}</datalist>
+      </Field>
+      <Field label="Link to a treatment (optional)">
+        <select className="tt-select" value={linkedTreatmentId} onChange={e => handleLinkChange(e.target.value)} style={inputStyle}>
+          <option value="">None</option>
+          {treatments.map(t => (
+            <option key={t.id} value={t.id}>
+              {(t.type === "Other" ? t.typeCustom : t.type) || "Treatment"}{t.cycle ? ` · Cycle ${t.cycle}` : ""}{t.day ? ` Day ${t.day}` : ""} · {fmtDate(t.date)}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <div className="tt-2col">
+        <button className="tt-btn" onClick={() => setCourseType("fixed")} style={{
+          background: courseType === "fixed" ? T.accentSoft : T.card, color: courseType === "fixed" ? T.accentDeep : T.inkSoft,
+          border: `1px solid ${courseType === "fixed" ? T.accent : T.line}`, borderRadius: 9, padding: "9px", fontSize: 12.5, fontWeight: 600,
+        }}>Fixed course</button>
+        <button className="tt-btn" onClick={() => setCourseType("taper")} style={{
+          background: courseType === "taper" ? T.accentSoft : T.card, color: courseType === "taper" ? T.accentDeep : T.inkSoft,
+          border: `1px solid ${courseType === "taper" ? T.accent : T.line}`, borderRadius: 9, padding: "9px", fontSize: 12.5, fontWeight: 600,
+        }}>Tapering course</button>
+      </div>
+
+      <Field label="Start date"><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={inputStyle} /></Field>
+
+      {courseType === "fixed" ? (
+        <div className="tt-2col">
+          <Field label="Number of doses"><input type="number" min="1" value={doseCount} onChange={e => setDoseCount(e.target.value)} style={inputStyle} /></Field>
+          <Field label="Frequency">
+            <select className="tt-select" value={frequency} onChange={e => setFrequency(e.target.value)} style={inputStyle}>
+              <option>Once daily</option>
+              <option>Twice daily</option>
+            </select>
+          </Field>
+        </div>
+      ) : (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 600, color: T.inkSoft, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.3 }}>Stages</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 64px 64px auto", gap: 6, marginBottom: 4 }}>
+            <div style={{ fontSize: 10, color: T.inkSoft }}>Dose</div>
+            <div style={{ fontSize: 10, color: T.inkSoft }}>Unit</div>
+            <div style={{ fontSize: 10, color: T.inkSoft }}>Days</div>
+            <div />
+          </div>
+          {stages.map((s, i) => (
+            <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 64px 64px auto", gap: 6, marginBottom: 6, alignItems: "center" }}>
+              <input value={s.dose} onChange={e => updateStage(i, "dose", e.target.value)} placeholder="12" style={inputStyle} />
+              <input value={s.unit} onChange={e => updateStage(i, "unit", e.target.value)} placeholder="mg" style={inputStyle} />
+              <input value={s.days} onChange={e => updateStage(i, "days", e.target.value)} placeholder="5" style={inputStyle} />
+              {stages.length > 1 && (
+                <button className="tt-btn" onClick={() => removeStage(i)} style={{ background: "transparent", color: T.breach, padding: 4 }}><X size={14} /></button>
+              )}
+            </div>
+          ))}
+          <button className="tt-btn" onClick={addStage} style={{ background: "transparent", color: T.accent, border: `1px dashed ${T.line}`, borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
+            <Plus size={12} /> Add stage
+          </button>
+        </div>
+      )}
+
+      <Field label="Notes (optional)"><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+
+      <button className="tt-btn" onClick={handleSave} style={{ width: "100%", background: T.accent, color: "#fff", padding: "11px", borderRadius: 9, fontSize: 13.5, fontWeight: 600, marginTop: 4 }}>
+        Save prescription
+      </button>
+    </ModalShell>
+  );
+}
+
+// ================= SIDE EFFECTS TAB =================
+function SideEffectsTab({ treatments, prescriptions, helpline }) {
+  const groups = useMemo(() => buildSideEffectGroups(treatments, prescriptions), [treatments, prescriptions]);
+
+  return (
+    <div>
+      <div style={{ background: T.warnBg, border: `1px solid ${T.warn}`, borderRadius: 10, padding: "12px 14px", marginBottom: 18, fontSize: 12, color: "#7A4E08", lineHeight: 1.55 }}>
+        <strong>General reference information only, not medical advice.</strong> Not everyone experiences every
+        side effect, this list may not be complete, and some effects can appear well after a treatment finishes.
+        Always ask your care team what to expect for your specific treatment. If you feel unwell, develop a
+        fever, or notice anything that worries you,{" "}
+        {helpline ? (
+          <>call your oncology helpline straight away — don't wait:{" "}
+            <a href={telHref(helpline)} style={{ color: "#7A4E08", fontWeight: 700, textDecoration: "underline" }}>{helpline}</a>.
+          </>
+        ) : (
+          <>contact your oncology team's 24-hour helpline straight away — don't wait. (Add the number under
+            Settings → Patient Data to show it here directly.)</>
+        )}
+      </div>
+
+      {groups.length === 0 ? (
+        <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>
+          Add a treatment or prescription to see relevant side effect information here.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {groups.map((g, i) => (
+            <div key={i} style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <AlertTriangle size={15} style={{ color: T.warn, flexShrink: 0 }} />
+                <strong style={{ fontSize: 13.5, color: T.ink }}>{g.source}</strong>
+                <span style={{ fontSize: 11, color: T.inkSoft }}>({g.sourceNote})</span>
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 20, display: "flex", flexDirection: "column", gap: 4 }}>
+                {g.effects.map((e, j) => <li key={j} style={{ fontSize: 12.5, color: T.ink, lineHeight: 1.5 }}>{e}</li>)}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ================= NUTRITION TAB =================
+function NutritionTab() {
+  const [selected, setSelected] = useState("");
+  const info = selected ? NUTRITION_INFO[selected] : null;
+
+  return (
+    <div>
+      <div style={{ background: T.warnBg, border: `1px solid ${T.warn}`, borderRadius: 10, padding: "12px 14px", marginBottom: 18, fontSize: 12, color: "#7A4E08", lineHeight: 1.5 }}>
+        <strong>General information only, not medical or dietary advice.</strong> Always check with your oncology
+        team or a dietitian before changing your diet during treatment — some foods need extra care (e.g. a
+        neutropenic diet), and some vitamins or supplements can interact with your medication.
+      </div>
+
+      <div style={{ marginBottom: 18, maxWidth: 320 }}>
+        <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Select a blood measurement</div>
+        <select className="tt-select" value={selected} onChange={e => setSelected(e.target.value)} style={inputStyle}>
+          <option value="">Choose a measurement…</option>
+          <optgroup label="Haematology">
+            {HAEMATOLOGY_KEYS.map(k => <option key={k} value={k}>{k}</option>)}
+          </optgroup>
+          <optgroup label="Biochemistry">
+            {BIOCHEMISTRY_KEYS.map(k => <option key={k} value={k}>{k}</option>)}
+          </optgroup>
+        </select>
+      </div>
+
+      {info && (
+        <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 18 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: T.accentDeep, marginBottom: 10 }}>{selected}</div>
+          {info.note && (
+            <div style={{ fontSize: 12.5, color: T.ink, background: T.paper, borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.5 }}>
+              {info.note}
+            </div>
+          )}
+          {info.nutrients.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {info.nutrients.map((n, i) => (
+                <div key={i}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: T.ink }}>{n.name}</div>
+                  <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 2 }}>Commonly found in: {n.foods}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ================= INSIGHTS TAB =================
+// A client-side statistical scan of the data already logged elsewhere in the
+// app — looking for a blood measurement that consistently moves in the same
+// direction in the days after a particular treatment drug or prescription.
+// Deliberately conservative: needs at least two occurrences of the same
+// trigger, with a consistent direction, before it surfaces anything at all.
+// This describes correlations in a small personal dataset — it never implies
+// causation, never suggests a treatment change, and isn't a diagnosis.
+const INSIGHTS_WINDOW_DAYS = 14;
+const INSIGHTS_MIN_PCT = 15;
+
+function findLocalPatterns(treatments, prescriptions, bloodEntries) {
+  const triggers = [];
+  treatments.forEach(t => {
+    if (t.status === "Skipped" || !t.date) return;
+    const drugNames = (t.drugs || "").split(",").map(s => s.trim()).filter(Boolean);
+    if (drugNames.length === 0) {
+      triggers.push({ label: t.type === "Other" ? (t.typeCustom || "Other treatment") : t.type, date: t.date });
+    } else {
+      drugNames.forEach(d => triggers.push({ label: d, date: t.date }));
+    }
+  });
+  (prescriptions || []).forEach(rx => {
+    if (rx.name && rx.startDate) triggers.push({ label: rx.name, date: rx.startDate });
+  });
+
+  const byLabel = {};
+  triggers.forEach(tr => { (byLabel[tr.label] = byLabel[tr.label] || []).push(tr.date); });
+
+  const bloodsByType = {};
+  (bloodEntries || []).forEach(e => {
+    const v = parseFloat(e.score);
+    if (isNaN(v)) return;
+    (bloodsByType[e.description] = bloodsByType[e.description] || []).push({ date: e.date, value: v });
+  });
+  Object.values(bloodsByType).forEach(arr => arr.sort((a, b) => a.date.localeCompare(b.date)));
+
+  const results = [];
+  Object.entries(byLabel).forEach(([label, dates]) => {
+    if (dates.length < 2) return; // need at least 2 occurrences of the trigger itself
+    Object.entries(bloodsByType).forEach(([element, series]) => {
+      if (series.length < 3) return; // need some history for this blood element
+      const changes = [];
+      dates.forEach(triggerDate => {
+        const before = [...series].reverse().find(r => r.date <= triggerDate);
+        const triggerMs = new Date(triggerDate + "T00:00:00").getTime();
+        const after = series.find(r => {
+          const diffDays = (new Date(r.date + "T00:00:00").getTime() - triggerMs) / 86400000;
+          return diffDays > 0 && diffDays <= INSIGHTS_WINDOW_DAYS;
+        });
+        if (before && after && before.value !== 0) {
+          changes.push(((after.value - before.value) / Math.abs(before.value)) * 100);
+        }
+      });
+      if (changes.length < 2) return;
+      const allUp = changes.every(c => c > 5);
+      const allDown = changes.every(c => c < -5);
+      if (!allUp && !allDown) return;
+      const avg = changes.reduce((a, b) => a + b, 0) / changes.length;
+      if (Math.abs(avg) < INSIGHTS_MIN_PCT) return;
+      results.push({ element, trigger: label, direction: allUp ? "up" : "down", occurrences: changes.length, avgChangePct: avg, avgWindowDays: INSIGHTS_WINDOW_DAYS });
+    });
+  });
+
+  results.sort((a, b) => b.occurrences - a.occurrences || Math.abs(b.avgChangePct) - Math.abs(a.avgChangePct));
+  return results;
+}
+
+async function fetchAiPatternSummary(findings) {
+  try {
+    const res = await fetch("/.netlify/functions/analyse-patterns", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ findings }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.summary || null;
+  } catch {
+    return null;
+  }
+}
+
+function InsightsTab({ treatments, prescriptions, bloodsEntries }) {
+  const [findings, setFindings] = useState(null); // null = not run yet
+  const [scanning, setScanning] = useState(false);
+  const [aiSummary, setAiSummary] = useState("");
+  const [loadingAi, setLoadingAi] = useState(false);
+
+  function runScan() {
+    setScanning(true);
+    setAiSummary("");
+    // A tiny delay just so the button feels responsive rather than instant/jumpy.
+    setTimeout(() => {
+      setFindings(findLocalPatterns(treatments, prescriptions, bloodsEntries));
+      setScanning(false);
+    }, 150);
+  }
+
+  async function handleAiExplain() {
+    if (!findings || findings.length === 0) return;
+    setLoadingAi(true);
+    const summary = await fetchAiPatternSummary(findings);
+    setAiSummary(summary || "No AI summary available right now — the findings above still stand on their own.");
+    setLoadingAi(false);
+  }
+
+  return (
+    <div>
+      <div style={{ background: T.warnBg, border: `1px solid ${T.warn}`, borderRadius: 10, padding: "12px 14px", marginBottom: 18, fontSize: 12, color: "#7A4E08", lineHeight: 1.55 }}>
+        <strong>This looks for statistical patterns in your own logged data — nothing more.</strong> It doesn't
+        diagnose anything, doesn't prove one thing causes another, and isn't medical advice. Small numbers of
+        instances can easily look like a pattern by chance. Always talk to your care team about anything you
+        notice here.
+      </div>
+
+      <button className="tt-btn" onClick={runScan} disabled={scanning} style={{
+        background: T.accent, color: "#fff", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600,
+        display: "flex", alignItems: "center", gap: 6, marginBottom: 18,
+      }}>
+        <Sparkles size={15} /> {scanning ? "Scanning…" : "Find patterns"}
+      </button>
+
+      {findings === null && (
+        <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 24, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>
+          Tap "Find patterns" to scan your logged treatments, prescriptions, and blood results for anything that
+          keeps recurring.
+        </div>
+      )}
+
+      {findings !== null && findings.length === 0 && (
+        <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 24, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>
+          No repeating pattern found yet. This usually needs at least two occurrences of the same treatment drug or
+          prescription, with blood results logged both before and within {INSIGHTS_WINDOW_DAYS} days after each one.
+          Keep logging and check back.
+        </div>
+      )}
+
+      {findings !== null && findings.length > 0 && (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+            {findings.map((f, i) => (
+              <div key={i} style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: T.ink }}>
+                  {f.direction === "up"
+                    ? <ArrowUp size={15} color={T.warn} style={{ flexShrink: 0 }} />
+                    : <ArrowDown size={15} color={T.info} style={{ flexShrink: 0 }} />}
+                  <span><strong>{f.element}</strong> tends to go {f.direction} after <strong>{f.trigger}</strong></span>
+                </div>
+                <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 6 }}>
+                  Seen in {f.occurrences} logged instance{f.occurrences === 1 ? "" : "s"} · average change{" "}
+                  {f.avgChangePct >= 0 ? "+" : ""}{f.avgChangePct.toFixed(0)}% within {f.avgWindowDays} days
+                  {f.occurrences < 3 ? " · small sample, treat with extra caution" : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button className="tt-btn" onClick={handleAiExplain} disabled={loadingAi} style={{
+            background: T.navy, color: "#fff", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600,
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <Sparkles size={14} /> {loadingAi ? "Thinking…" : "Ask AI to explain these patterns"}
+          </button>
+
+          {aiSummary && (
+            <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16, marginTop: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: T.accentDeep, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                <Sparkles size={14} /> AI summary
+              </div>
+              <div style={{ fontSize: 13, color: T.ink, lineHeight: 1.6 }}>{aiSummary}</div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ================= SETTINGS TAB =================
-function SettingsTab({ patient, setPatient, exportBundle, onImportAll, canEdit, canManageHousehold, householdId, householdName }) {
+function SettingsTab({ patient, setPatient, exportBundle, onImportAll, canEdit, canManageHousehold, householdId, householdName, themeMode, setThemeMode }) {
   const [form, setForm] = useState(patient);
   const [saved, setSaved] = useState(false);
   useEffect(() => setForm(patient), [patient]);
@@ -2475,6 +3835,23 @@ function SettingsTab({ patient, setPatient, exportBundle, onImportAll, canEdit, 
 
   return (
     <div>
+      <div className="tt-settings-card" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: T.accentDeep, marginBottom: 4 }}>Appearance</div>
+        <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 14 }}>
+          Dark mode is easier on the eyes at night or for light sensitivity. This is saved on this device only —
+          everyone in the household chooses their own.
+        </div>
+        <div style={{ display: "inline-flex", background: T.lineSoft, borderRadius: 20, padding: 3 }}>
+          <button className="tt-btn" onClick={() => setThemeMode("light")} style={{
+            display: "flex", alignItems: "center", gap: 6, borderRadius: 17, padding: "7px 16px", fontSize: 12.5, fontWeight: 600,
+            background: themeMode === "light" ? T.card : "transparent", color: themeMode === "light" ? T.ink : T.inkSoft,
+          }}><Sun size={14} /> Light</button>
+          <button className="tt-btn" onClick={() => setThemeMode("dark")} style={{
+            display: "flex", alignItems: "center", gap: 6, borderRadius: 17, padding: "7px 16px", fontSize: 12.5, fontWeight: 600,
+            background: themeMode === "dark" ? T.card : "transparent", color: themeMode === "dark" ? T.ink : T.inkSoft,
+          }}><Moon size={14} /> Dark</button>
+        </div>
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
         <button className="tt-btn" style={{
           display: "flex", alignItems: "center", gap: 7, background: T.navy, color: "#fff",
@@ -2493,6 +3870,13 @@ function SettingsTab({ patient, setPatient, exportBundle, onImportAll, canEdit, 
           <Field label="Height"><input value={form.height} onChange={e => set("height", e.target.value)} disabled={!canEdit} placeholder="e.g. 165 cm" style={inputStyle} /></Field>
           <Field label="Weight"><input value={form.weight} onChange={e => set("weight", e.target.value)} disabled={!canEdit} placeholder="e.g. 62 kg" style={inputStyle} /></Field>
         </div>
+        <Field label="Oncology helpline number">
+          <input type="tel" value={form.helpline} onChange={e => set("helpline", e.target.value)} disabled={!canEdit} placeholder="e.g. 0800 123 4567" style={inputStyle} />
+        </Field>
+        <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: -8, marginBottom: 14 }}>
+          Shown as a tap-to-call number on the Summary and Side Effects tabs — check your treatment paperwork or
+          ask your care team for the right number, since it varies by hospital and team.
+        </div>
 
         {canEdit && (
           <button className="tt-btn" onClick={handleSave} style={{ background: T.accent, color: "#fff", padding: "11px 20px", borderRadius: 9, fontSize: 13.5, fontWeight: 600, marginTop: 4 }}>
@@ -2503,7 +3887,111 @@ function SettingsTab({ patient, setPatient, exportBundle, onImportAll, canEdit, 
 
       <HouseholdSection householdId={householdId} householdName={householdName} canManageHousehold={canManageHousehold} />
 
+      <NotificationsSection />
+
       {canManageHousehold && <BackupSection exportBundle={exportBundle} onImportAll={onImportAll} />}
+
+      <div style={{ display: "flex", justifyContent: "center", padding: "24px 0 8px" }}>
+        <img src="/lockup-light.svg" alt="CareTrack" style={{ height: 26, width: "auto", opacity: 0.7 }} />
+      </div>
+    </div>
+  );
+}
+
+const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY || "";
+
+function NotificationsSection() {
+  const [permission, setPermission] = useState(() => getPushPermissionState());
+  const [subscribed, setSubscribed] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [prefs, setPrefsState] = useState({ new_data_enabled: true, reminders_enabled: true });
+
+  useEffect(() => {
+    (async () => {
+      const [sub, p] = await Promise.all([getExistingPushSubscription(), getNotificationPrefs()]);
+      setSubscribed(!!sub);
+      setPrefsState(p);
+      setChecking(false);
+    })();
+  }, []);
+
+  async function handleEnable() {
+    setBusy(true); setError("");
+    try {
+      if (!VAPID_PUBLIC_KEY) throw new Error("Notifications haven't been set up for this deployment yet — see the README.");
+      await subscribeToPush(VAPID_PUBLIC_KEY);
+      setSubscribed(true);
+      setPermission(getPushPermissionState());
+    } catch (e) {
+      setError(e.message || "Couldn't turn on notifications.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function handleDisable() {
+    setBusy(true);
+    try {
+      await unsubscribeFromPush();
+      setSubscribed(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function togglePref(key) {
+    const next = { ...prefs, [key]: !prefs[key] };
+    setPrefsState(next);
+    await setNotificationPrefs(next);
+  }
+
+  const supported = typeof navigator !== "undefined" && "serviceWorker" in navigator && "PushManager" in window;
+
+  return (
+    <div className="tt-settings-card" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: T.accentDeep, marginBottom: 4 }}>Notifications</div>
+      <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 16, lineHeight: 1.5 }}>
+        Get notified on this device when new treatments, appointments, or results are added, and a reminder 24
+        hours ahead of an appointment or treatment. This is per-device — you'll need to turn it on separately on
+        your phone and your computer, for example. On iPhone, this only works once the app's been added to your
+        Home Screen (Share → Add to Home Screen) — a Safari tab on its own can't receive push notifications.
+      </div>
+
+      {checking ? null : !supported ? (
+        <div style={{ fontSize: 12.5, color: T.inkSoft, marginBottom: 14 }}>Notifications aren't supported in this browser.</div>
+      ) : !subscribed ? (
+        <button className="tt-btn" onClick={handleEnable} disabled={busy} style={{ background: T.accent, color: "#fff", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600, marginBottom: 14 }}>
+          {busy ? "Turning on…" : "Turn on notifications on this device"}
+        </button>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12.5, color: T.ok, fontWeight: 600 }}>✓ Notifications are on for this device</span>
+          <button className="tt-btn" onClick={handleDisable} disabled={busy} style={{ background: "transparent", color: T.breach, fontSize: 12, textDecoration: "underline", padding: 0 }}>
+            Turn off
+          </button>
+        </div>
+      )}
+
+      {error && <div style={{ fontSize: 12, color: T.breach, marginBottom: 12 }}>{error}</div>}
+      {permission === "denied" && (
+        <div style={{ fontSize: 12, color: T.breach, marginBottom: 12 }}>
+          Notifications are blocked for this site in your browser's own settings — you'll need to allow them
+          there before this will work.
+        </div>
+      )}
+
+      {!checking && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 4 }}>
+          <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, cursor: "pointer" }}>
+            <span style={{ fontSize: 12.5, color: T.ink }}>New treatments, appointments and results added</span>
+            <input type="checkbox" checked={prefs.new_data_enabled} onChange={() => togglePref("new_data_enabled")} style={{ width: 18, height: 18, accentColor: T.accent, flexShrink: 0 }} />
+          </label>
+          <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, cursor: "pointer" }}>
+            <span style={{ fontSize: 12.5, color: T.ink }}>Reminders 24 hours before an appointment or treatment</span>
+            <input type="checkbox" checked={prefs.reminders_enabled} onChange={() => togglePref("reminders_enabled")} style={{ width: 18, height: 18, accentColor: T.accent, flexShrink: 0 }} />
+          </label>
+        </div>
+      )}
     </div>
   );
 }

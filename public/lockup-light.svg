@@ -1,0 +1,10 @@
+<svg width="260" height="72" viewBox="0 0 260 72" xmlns="http://www.w3.org/2000/svg">
+  <g>
+    <path d="M58 20A24 24 0 1 0 58 52" stroke="#16403F" stroke-width="4.5" stroke-linecap="round" fill="none"/>
+    <path d="M14 36 L26 36 L31 24 L38 48 L43 36 L52 36" stroke="#E8734A" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <circle cx="52" cy="36" r="5" fill="#E8734A"/>
+  </g>
+  <text x="76" y="44" font-family="'Segoe UI', Arial, sans-serif" font-size="30" font-weight="700" letter-spacing="-0.3">
+    <tspan fill="#16403F">Care</tspan><tspan fill="#E8734A" font-weight="600">Track</tspan>
+  </text>
+</svg>

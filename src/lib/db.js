@@ -153,6 +153,111 @@ export async function deleteSupportMessage(id) {
   return !error;
 }
 
+// ---------- Push notifications ----------
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+export function getPushPermissionState() {
+  if (!("Notification" in window)) return "unsupported";
+  return Notification.permission; // "default" | "granted" | "denied"
+}
+
+export async function getExistingPushSubscription() {
+  if (!("serviceWorker" in navigator)) return null;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    return await reg.pushManager.getSubscription();
+  } catch {
+    return null;
+  }
+}
+
+// Requests permission (if needed), subscribes this device via the service
+// worker, and saves the subscription against the current user + household.
+export async function subscribeToPush(vapidPublicKey) {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    throw new Error("Push notifications aren't supported in this browser.");
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("Notification permission wasn't granted.");
+
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapidPublicKey) });
+  }
+
+  const { data: userData } = await supabase.auth.getUser();
+  const user = userData?.user;
+  if (!user || !_householdId) throw new Error("Not signed in.");
+
+  const json = sub.toJSON();
+  const { error } = await supabase.from("push_subscriptions").upsert(
+    { user_id: user.id, household_id: _householdId, endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth },
+    { onConflict: "endpoint" }
+  );
+  if (error) throw error;
+  return true;
+}
+
+export async function unsubscribeFromPush() {
+  if (!("serviceWorker" in navigator)) return true;
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  if (sub) {
+    await supabase.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
+    await sub.unsubscribe();
+  }
+  return true;
+}
+
+export async function getNotificationPrefs() {
+  const fallback = { new_data_enabled: true, reminders_enabled: true };
+  const { data: userData } = await supabase.auth.getUser();
+  const user = userData?.user;
+  if (!user || !_householdId) return fallback;
+  const { data, error } = await supabase
+    .from("notification_prefs")
+    .select("new_data_enabled, reminders_enabled")
+    .eq("user_id", user.id).eq("household_id", _householdId)
+    .maybeSingle();
+  return (error || !data) ? fallback : data;
+}
+
+export async function setNotificationPrefs(prefs) {
+  const { data: userData } = await supabase.auth.getUser();
+  const user = userData?.user;
+  if (!user || !_householdId) return false;
+  const { error } = await supabase.from("notification_prefs").upsert(
+    { user_id: user.id, household_id: _householdId, ...prefs, updated_at: new Date().toISOString() },
+    { onConflict: "user_id,household_id" }
+  );
+  return !error;
+}
+
+// Best-effort request to push a notification to the rest of the household
+// (excluding whoever just made the change). Never throws — a notification
+// failing to send should never block the actual data save.
+export async function notifyHousehold({ title, body }) {
+  if (!_householdId) return;
+  try {
+    const { data: userData } = await supabase.auth.getUser();
+    await fetch("/.netlify/functions/send-notification", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ householdId: _householdId, excludeUserId: userData?.user?.id, title, body }),
+    });
+  } catch {
+    // best-effort only — swallow errors
+  }
+}
+
 // ---------- Realtime ----------
 // Subscribes to changes on this household's data and support messages, and
 // calls onChange(table, payload) whenever something changes — used to keep
