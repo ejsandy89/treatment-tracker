@@ -218,16 +218,23 @@ export async function unsubscribeFromPush() {
 }
 
 export async function getNotificationPrefs() {
-  const fallback = { new_data_enabled: true, reminders_enabled: true };
+  const fallback = {
+    reminders_enabled: true,
+    treatment_completed_enabled: true,
+    new_treatments_enabled: true,
+    new_appointments_enabled: true,
+    new_results_enabled: true,
+    support_messages_enabled: true,
+  };
   const { data: userData } = await supabase.auth.getUser();
   const user = userData?.user;
   if (!user || !_householdId) return fallback;
   const { data, error } = await supabase
     .from("notification_prefs")
-    .select("new_data_enabled, reminders_enabled")
+    .select("reminders_enabled, treatment_completed_enabled, new_treatments_enabled, new_appointments_enabled, new_results_enabled, support_messages_enabled")
     .eq("user_id", user.id).eq("household_id", _householdId)
     .maybeSingle();
-  return (error || !data) ? fallback : data;
+  return (error || !data) ? fallback : { ...fallback, ...data };
 }
 
 export async function setNotificationPrefs(prefs) {
@@ -244,18 +251,35 @@ export async function setNotificationPrefs(prefs) {
 // Best-effort request to push a notification to the rest of the household
 // (excluding whoever just made the change). Never throws — a notification
 // failing to send should never block the actual data save.
-export async function notifyHousehold({ title, body }) {
+export async function notifyHousehold({ title, body, category }) {
   if (!_householdId) return;
   try {
     const { data: userData } = await supabase.auth.getUser();
     await fetch("/.netlify/functions/send-notification", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ householdId: _householdId, excludeUserId: userData?.user?.id, title, body }),
+      body: JSON.stringify({ householdId: _householdId, excludeUserId: userData?.user?.id, title, body, category }),
     });
   } catch {
     // best-effort only — swallow errors
   }
+}
+
+// Sends a notification straight back to the current user's own device(s),
+// bypassing the normal "everyone except whoever made the change" rule — for
+// checking your own setup actually works, without needing a second person.
+export async function sendTestNotification() {
+  const { data: userData } = await supabase.auth.getUser();
+  const user = userData?.user;
+  if (!user) throw new Error("Not signed in.");
+  const res = await fetch("/.netlify/functions/send-notification", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ selfTest: true, userId: user.id, title: "🔔 Test notification", body: "If you can see this, notifications are working." }),
+  });
+  const data = await res.json();
+  if (!data || typeof data.sent !== "number") throw new Error("Unexpected response from the server.");
+  return data.sent;
 }
 
 // ---------- Realtime ----------

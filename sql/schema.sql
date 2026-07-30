@@ -204,8 +204,13 @@ create index if not exists push_subscriptions_user_idx on push_subscriptions(use
 create table if not exists notification_prefs (
   user_id uuid not null references auth.users(id) on delete cascade,
   household_id uuid not null references households(id) on delete cascade,
-  new_data_enabled boolean not null default true,
-  reminders_enabled boolean not null default true,
+  new_data_enabled boolean not null default true, -- superseded by the granular columns below, kept for compatibility
+  reminders_enabled boolean not null default true, -- 24h appointment/treatment reminders AND prescription dose-time reminders
+  treatment_completed_enabled boolean not null default true,
+  new_treatments_enabled boolean not null default true,
+  new_appointments_enabled boolean not null default true,
+  new_results_enabled boolean not null default true,
+  support_messages_enabled boolean not null default true,
   updated_at timestamptz not null default now(),
   primary key (user_id, household_id)
 );

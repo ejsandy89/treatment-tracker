@@ -26,14 +26,48 @@ exports.handler = async (event) => {
   } catch {
     return { statusCode: 400, body: "Invalid JSON body" };
   }
-  const { householdId, excludeUserId, title, body: message } = body;
-  if (!householdId || !title) return { statusCode: 400, body: "Missing householdId or title" };
+  const { householdId, excludeUserId, title, body: message, selfTest, userId, category } = body;
+
+  // Maps a notification's category to the specific preference column that
+  // should gate it — each category defaults to on if never explicitly set.
+  const CATEGORY_COLUMNS = {
+    treatment_added: "new_treatments_enabled",
+    treatment_completed: "treatment_completed_enabled",
+    appointment_added: "new_appointments_enabled",
+    result_added: "new_results_enabled",
+    support_message: "support_messages_enabled",
+  };
+  const prefColumn = CATEGORY_COLUMNS[category] || "new_treatments_enabled";
 
   webpush.setVapidDetails("mailto:no-reply@example.com", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // Only notify members who have "new data" notifications turned on
-  // (defaulting to on if they've never set a preference).
+  // Self-test path: send straight back to the person who asked, ignoring the
+  // usual "everyone except whoever made the change" logic — this is exactly
+  // for verifying your own device/subscription works.
+  if (selfTest && userId) {
+    const { data: subs } = await supabase.from("push_subscriptions").select("*").eq("user_id", userId);
+    let sent = 0;
+    await Promise.all((subs || []).map(async (sub) => {
+      try {
+        await webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+          JSON.stringify({ title: title || "🔔 Test notification", body: message || "If you can see this, notifications are working." })
+        );
+        sent++;
+      } catch (e) {
+        if (e.statusCode === 404 || e.statusCode === 410) {
+          await supabase.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
+        }
+      }
+    }));
+    return { statusCode: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sent }) };
+  }
+
+  if (!householdId || !title) return { statusCode: 400, body: "Missing householdId or title" };
+
+  // Only notify members who have this specific category of notification
+  // turned on (defaulting to on if they've never set a preference).
   const { data: members } = await supabase
     .from("household_members")
     .select("user_id")
@@ -43,10 +77,10 @@ exports.handler = async (event) => {
 
   const { data: prefs } = await supabase
     .from("notification_prefs")
-    .select("user_id, new_data_enabled")
+    .select(`user_id, ${prefColumn}`)
     .eq("household_id", householdId)
     .in("user_id", memberIds);
-  const disabledUserIds = new Set((prefs || []).filter(p => p.new_data_enabled === false).map(p => p.user_id));
+  const disabledUserIds = new Set((prefs || []).filter(p => p[prefColumn] === false).map(p => p.user_id));
   const eligibleUserIds = memberIds.filter(id => !disabledUserIds.has(id));
   if (eligibleUserIds.length === 0) return { statusCode: 200, body: JSON.stringify({ sent: 0 }) };
 

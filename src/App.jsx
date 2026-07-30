@@ -14,7 +14,7 @@ import {
   getMyMembership, createHousehold, redeemInvite, createInvite, listInvites, revokeInvite, listMembers,
   setActiveHousehold, listSupportMessages, addSupportMessage, deleteSupportMessage, subscribeToHousehold,
   getPushPermissionState, getExistingPushSubscription, subscribeToPush, unsubscribeFromPush,
-  getNotificationPrefs, setNotificationPrefs, notifyHousehold,
+  getNotificationPrefs, setNotificationPrefs, notifyHousehold, sendTestNotification,
 } from "./lib/db.js";
 import { encryptPayload, decryptPayload } from "./lib/crypto.js";
 
@@ -39,7 +39,7 @@ const LIGHT_THEME = {
 const DARK_THEME = {
   paper: "#0B211F", card: "#123330", ink: "#EDEDE6", inkSoft: "#9FB0AE",
   line: "#1E4340", lineSoft: "#193A37",
-  navy: "#0A1E1D", accent: "#2E7A72", accentDeep: "#16403F",
+  navy: "#0F2B2A", accent: "#2E7A72", accentDeep: "#7FD9CC",
   accentSoft: "#1A3F3B", accentBright: "#F0906B",
   ok: "#5FCFA0", okBg: "#123A2C", warn: "#F0B054", warnBg: "#3D2E10",
   breach: "#F0798A", breachBg: "#3D151B", info: "#7FAEEA", infoBg: "#152A42",
@@ -891,7 +891,7 @@ export default function App() {
   if (!splashDone || !ready) {
     return (
       <div className="tt-app tt-splash" style={{
-        fontFamily: T.ui, background: `linear-gradient(160deg, ${T.navy}, ${T.accentDeep})`,
+        fontFamily: T.ui, background: T.navy,
         color: "#fff", overflow: "hidden", border: `1px solid ${T.line}`,
       }}>
         <style>{getGlobalCss()}</style>
@@ -951,7 +951,7 @@ export default function App() {
   async function handleAddSupportMessage(entry) {
     await addSupportMessage(entry);
     setSupportMessages(await listSupportMessages());
-    notifyHousehold({ title: "❤️ New message of support", body: entry.name ? `From ${entry.name}` : "Someone left a message for you" });
+    notifyHousehold({ title: "❤️ New message of support", body: entry.name ? `From ${entry.name}` : "Someone left a message for you", category: "support_message" });
   }
   async function handleDeleteSupportMessage(id) {
     await deleteSupportMessage(id);
@@ -976,7 +976,7 @@ export default function App() {
       <div className="tt-content">
         {!canEdit && (
           <div style={{
-            background: T.infoBg, border: `1px solid ${T.info}`, color: "#2C4172",
+            background: T.infoBg, border: `1px solid ${T.info}`, color: T.infoText,
             borderRadius: 10, padding: "10px 14px", fontSize: 12.5, marginBottom: 16,
           }}>
             You're viewing <strong>{membership.householdName}</strong> — you can see everything and add messages of
@@ -985,7 +985,7 @@ export default function App() {
         )}
         {isEmpty && !["settings", "contents", "guidance"].includes(mainTab) && (
           <div style={{
-            background: T.infoBg, border: `1px solid ${T.info}`, color: "#2C4172",
+            background: T.infoBg, border: `1px solid ${T.info}`, color: T.infoText,
             borderRadius: 10, padding: "10px 14px", fontSize: 12.5, marginBottom: 16,
           }}>
             There's no data here yet. {canEdit ? "Just start adding treatments, appointments and results below, or restore a backup from " : "Ask the owner to start adding data, or check "}
@@ -995,7 +995,7 @@ export default function App() {
         {mainTab === "summary" && patient.helpline && (
           <a href={telHref(patient.helpline)} style={{
             display: "flex", alignItems: "center", gap: 8, textDecoration: "none",
-            background: T.warnBg, border: `1px solid ${T.warn}`, color: "#7A4E08",
+            background: T.warnBg, border: `1px solid ${T.warn}`, color: T.warnText,
             borderRadius: 10, padding: "10px 14px", fontSize: 12.5, marginBottom: 16, fontWeight: 600,
           }}>
             <Phone size={14} style={{ flexShrink: 0 }} /> Oncology helpline: {patient.helpline} (tap to call)
@@ -1073,7 +1073,7 @@ function AuthScreen({ inviteToken, inviteError }) {
 
   return (
     <div className="tt-app tt-splash" style={{
-      fontFamily: T.ui, background: `linear-gradient(160deg, ${T.navy}, ${T.accentDeep})`, color: "#fff",
+      fontFamily: T.ui, background: T.navy, color: "#fff",
       overflow: "hidden", border: `1px solid ${T.line}`,
     }}>
       <style>{getGlobalCss()}</style>
@@ -1129,7 +1129,7 @@ function CreateHouseholdScreen({ inviteError, onCreated }) {
 
   return (
     <div className="tt-app tt-splash" style={{
-      fontFamily: T.ui, background: `linear-gradient(160deg, ${T.navy}, ${T.accentDeep})`, color: "#fff",
+      fontFamily: T.ui, background: T.navy, color: "#fff",
       overflow: "hidden", border: `1px solid ${T.line}`,
     }}>
       <style>{getGlobalCss()}</style>
@@ -1648,7 +1648,7 @@ function CalendarTab({ treatments, setTreatments, view, setView, canEdit }) {
     setTreatments(prev => [...prev, { id: uid(), history: [], ...t }]);
     setFormOpen(false);
     const label = t.type === "Other" ? (t.typeCustom || "treatment") : t.type;
-    notifyHousehold({ title: "💉 New treatment added", body: `${label} on ${fmtDate(t.date)}` });
+    notifyHousehold({ title: "💉 New treatment added", body: `${label} on ${fmtDate(t.date)}`, category: "treatment_added" });
   }
   function updateTreatment(id, patch) {
     setTreatments(prev => {
@@ -1657,7 +1657,7 @@ function CalendarTab({ treatments, setTreatments, view, setView, canEdit }) {
       if (patch.status === "Completed" && before && before.status !== "Completed") {
         const after = next.find(t => t.id === id);
         const label = after.type === "Other" ? (after.typeCustom || "treatment") : after.type;
-        notifyHousehold({ title: "✅ Treatment completed", body: `${label} on ${fmtDate(after.date)}` });
+        notifyHousehold({ title: "✅ Treatment completed", body: `${label} on ${fmtDate(after.date)}`, category: "treatment_completed" });
       }
       return next;
     });
@@ -1909,12 +1909,13 @@ function rxSummaryLine(rx) {
   if (schedule.length === 0) return "No schedule set";
   const start = fmtDate(schedule[0].date);
   const end = fmtDate(schedule[schedule.length - 1].date);
+  const timeText = rx.reminderTime ? ` at ${rx.reminderTime}` : "";
   if (rx.courseType === "taper") {
     const stagesText = (rx.stages || []).map(s => `${s.dose}${s.unit || ""} × ${s.days}d`).join(", ");
-    return `${stagesText} (${start} – ${end})`;
+    return `${stagesText}${timeText} (${start} – ${end})`;
   }
   const freq = rx.frequency === "Twice daily" ? "twice daily" : "once daily";
-  return `${rx.doseCount} dose${Number(rx.doseCount) === 1 ? "" : "s"}, ${freq}, starting ${start}`;
+  return `${rx.doseCount} dose${Number(rx.doseCount) === 1 ? "" : "s"}, ${freq}${timeText}, starting ${start}`;
 }
 function shiftMonth(cursor, delta) {
   let m = cursor.month + delta, y = cursor.year;
@@ -2060,7 +2061,7 @@ function BloodsTab({ bloodsEntries, setBloodsEntries, canEdit = true }) {
 
   function addEntry(entry) {
     setBloodsEntries(prev => [...prev, { id: uid(), ...entry }]);
-    notifyHousehold({ title: "🩸 New blood result added", body: `${entry.description}: ${entry.score}${entry.unit ? ` ${entry.unit}` : ""}` });
+    notifyHousehold({ title: "🩸 New blood result added", body: `${entry.description}: ${entry.score}${entry.unit ? ` ${entry.unit}` : ""}`, category: "result_added" });
   }
   function deleteEntry(id) {
     setBloodsEntries(prev => prev.filter(e => e.id !== id));
@@ -2128,10 +2129,34 @@ function BloodsTab({ bloodsEntries, setBloodsEntries, canEdit = true }) {
   );
 }
 
+// Shared by BloodsSummaryTable and MeasurementsSummaryTable. Defined at
+// module scope (not nested inside a render function) so React treats it as
+// a stable component across renders, rather than remounting the whole
+// header row every time the parent re-renders.
+function SortableTh({ label, sortKeyName, width, sticky, sortKey, sortDir, onSort }) {
+  const active = sortKey === sortKeyName;
+  return (
+    <th
+      onClick={() => onSort(sortKeyName)}
+      style={{
+        ...thStyle, textAlign: sticky ? "left" : "center", width, minWidth: width, maxWidth: width,
+        cursor: "pointer", userSelect: "none",
+        ...(sticky ? { position: "sticky", left: 0, background: T.paper, zIndex: 3 } : {}),
+      }}
+    >
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+        {label}
+        {active && (sortDir === "asc" ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}
+      </span>
+    </th>
+  );
+}
+
 function BloodsSummaryTable({ bloodsEntries }) {
   const grouped = useMemo(() => {
     const map = {};
     bloodsEntries.forEach(e => {
+      if (!e.description || !e.date) return; // skip malformed/legacy entries rather than crash on them
       const v = parseFloat(e.score);
       if (isNaN(v)) return;
       if (!map[e.description]) map[e.description] = [];
@@ -2238,25 +2263,6 @@ function BloodsSummaryTable({ bloodsEntries }) {
     else { setSortKey(key); setSortDir("asc"); }
   }
 
-  function SortableTh({ label, sortKeyName, width, sticky }) {
-    const active = sortKey === sortKeyName;
-    return (
-      <th
-        onClick={() => handleSort(sortKeyName)}
-        style={{
-          ...thStyle, textAlign: sticky ? "left" : "center", width, minWidth: width, maxWidth: width,
-          cursor: "pointer", userSelect: "none",
-          ...(sticky ? { position: "sticky", left: 0, background: T.paper, zIndex: 3 } : {}),
-        }}
-      >
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-          {label}
-          {active && (sortDir === "asc" ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}
-        </span>
-      </th>
-    );
-  }
-
   if (types.length === 0) {
     return <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>No results recorded yet.</div>;
   }
@@ -2281,11 +2287,11 @@ function BloodsSummaryTable({ bloodsEntries }) {
         <table style={{ borderCollapse: "collapse", fontSize: 12.5, tableLayout: "fixed" }}>
           <thead>
             <tr style={{ background: T.paper, textAlign: "left" }}>
-              <SortableTh label="Type" sortKeyName="type" width={typeColWidth} sticky />
-              {allDates.map(d => <SortableTh key={d} label={fmtShortDate(d)} sortKeyName={d} width={otherColWidth} />)}
-              <SortableTh label="Change" sortKeyName="change" width={otherColWidth} />
-              <SortableTh label="Normal" sortKeyName="normal" width={otherColWidth} />
-              <SortableTh label="vs normal" sortKeyName="vsNormal" width={otherColWidth} />
+              <SortableTh label="Type" sortKeyName="type" width={typeColWidth} sticky sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              {allDates.map(d => <SortableTh key={d} label={fmtShortDate(d)} sortKeyName={d} width={otherColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />)}
+              <SortableTh label="Change" sortKeyName="change" width={otherColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Normal" sortKeyName="normal" width={otherColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="vs normal" sortKeyName="vsNormal" width={otherColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
           <tbody>
@@ -2340,7 +2346,7 @@ function BloodsSummaryTable({ bloodsEntries }) {
 function BloodsTrendChartBody({ bloodsEntries, type }) {
   const chartData = useMemo(() => {
     return bloodsEntries
-      .filter(e => e.description === type && !isNaN(parseFloat(e.score)))
+      .filter(e => e.description === type && e.date && !isNaN(parseFloat(e.score)))
       .map(e => ({ date: e.date, [type]: parseFloat(e.score) }))
       .sort((a, b) => a.date.localeCompare(b.date));
   }, [bloodsEntries, type]);
@@ -2476,7 +2482,7 @@ function MeasurementsTab({ measurementsEntries, setMeasurementsEntries, canEdit 
 
   function addEntry(entry) {
     setMeasurementsEntries(prev => [...prev, { id: uid(), ...entry }]);
-    notifyHousehold({ title: "🩻 New measurement added", body: `${entry.description}: ${entry.score}${entry.unit ? ` ${entry.unit}` : ""}` });
+    notifyHousehold({ title: "🩻 New measurement added", body: `${entry.description}: ${entry.score}${entry.unit ? ` ${entry.unit}` : ""}`, category: "result_added" });
   }
   function deleteEntry(id) { setMeasurementsEntries(prev => prev.filter(e => e.id !== id)); }
 
@@ -2665,25 +2671,6 @@ function MeasurementsSummaryTable({ entries }) {
     else { setSortKey(key); setSortDir("asc"); }
   }
 
-  function SortableTh({ label, sortKeyName, width, sticky }) {
-    const active = sortKey === sortKeyName;
-    return (
-      <th
-        onClick={() => handleSort(sortKeyName)}
-        style={{
-          ...thStyle, textAlign: sticky ? "left" : "center", width, minWidth: width, maxWidth: width,
-          cursor: "pointer", userSelect: "none",
-          ...(sticky ? { position: "sticky", left: 0, background: T.paper, zIndex: 3 } : {}),
-        }}
-      >
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-          {label}
-          {active && (sortDir === "asc" ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}
-        </span>
-      </th>
-    );
-  }
-
   // The combined chart always shows every measurement, regardless of the
   // table's filter — one continuous line ordered by date, each point
   // labelled with its scan type.
@@ -2715,9 +2702,9 @@ function MeasurementsSummaryTable({ entries }) {
         <table style={{ borderCollapse: "collapse", fontSize: 12.5, tableLayout: "fixed" }}>
           <thead>
             <tr style={{ background: T.paper, textAlign: "left" }}>
-              <SortableTh label="Type" sortKeyName="type" width={typeColWidth} sticky />
-              {allDates.map(d => <SortableTh key={d} label={fmtShortDate(d)} sortKeyName={d} width={otherColWidth} />)}
-              <SortableTh label="Change" sortKeyName="change" width={otherColWidth} />
+              <SortableTh label="Type" sortKeyName="type" width={typeColWidth} sticky sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              {allDates.map(d => <SortableTh key={d} label={fmtShortDate(d)} sortKeyName={d} width={otherColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />)}
+              <SortableTh label="Change" sortKeyName="change" width={otherColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
           <tbody>
@@ -2801,7 +2788,7 @@ function AppointmentsTab({ appointments, setAppointments, view, setView, canEdit
     const id = uid();
     setAppointments(prev => [...prev, { id, history: [], summary: [], ...a }]);
     setFormOpen(false);
-    notifyHousehold({ title: "📅 New appointment added", body: `${a.name || a.role || "Appointment"} on ${fmtDate(a.date)}` });
+    notifyHousehold({ title: "📅 New appointment added", body: `${a.name || a.role || "Appointment"} on ${fmtDate(a.date)}`, category: "appointment_added" });
     if (a.notes && a.notes.trim()) {
       const bullets = await summariseNotes(a.notes);
       setAppointments(prev => prev.map(x => (x.id === id ? { ...x, summary: bullets } : x)));
@@ -3273,6 +3260,7 @@ function GuidanceTab() {
               <li>Tap "Add prescription".</li>
               <li>Enter the medication name, and optionally link it to a specific treatment from the calendar (e.g. "the first chemo in Cycle 3") — this sets a sensible starting date automatically, which you can still adjust.</li>
               <li>Choose a fixed course (a set number of doses, e.g. 5× Filgrastim) or a tapering course (e.g. a steroid reducing from 12mg to 10mg to 8mg over several stages), and fill in the details.</li>
+              <li>Optionally set a time to take it — anyone with reminders turned on gets a notification around that time on each day a dose is due.</li>
               <li>Save — the day-by-day schedule is worked out automatically.</li>
             </ol>
             <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6 }}>
@@ -3318,12 +3306,14 @@ function GuidanceTab() {
             admin, or editor can delete one.
           </div>
           <div>
-            <strong>Settings → Patient Data</strong> — name, date of birth, address, height and weight, shown
-            throughout the app.
-          </div>
-          <div>
-            <strong>Settings → Appearance</strong> — switch between light and dark mode. This is saved per
-            device, not per person, so everyone using the app chooses their own.
+            <strong>Settings</strong> is now organised into sub-tabs:
+            <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>
+              <li style={{ marginBottom: 4 }}><strong>Patient Data</strong> — name, date of birth, address, height, weight, and the oncology helpline number, shown throughout the app.</li>
+              <li style={{ marginBottom: 4 }}><strong>Appearance</strong> — switch between light and dark mode. Saved per device, not per person, so everyone chooses their own.</li>
+              <li style={{ marginBottom: 4 }}><strong>Household &amp; Invites</strong> — owner/admin only: create and manage invite links, see who's joined.</li>
+              <li style={{ marginBottom: 4 }}><strong>Notifications</strong> — turn on notifications for this device, then choose which categories you want: treatment completed, new treatments, new appointments, new results, messages of support, and reminders — each on by default, each switchable independently.</li>
+              <li><strong>Backup &amp; Sharing</strong> — owner/admin only: export an encrypted backup, or import one to restore.</li>
+            </ul>
           </div>
         </div>
       </GuidanceSection>
@@ -3451,6 +3441,7 @@ function AddPrescriptionModal({ treatments, onClose, onSave }) {
   const [doseCount, setDoseCount] = useState("5");
   const [frequency, setFrequency] = useState("Once daily");
   const [stages, setStages] = useState([{ dose: "12", unit: "mg", days: "5" }]);
+  const [reminderTime, setReminderTime] = useState("");
   const [notes, setNotes] = useState("");
 
   function handleLinkChange(id) {
@@ -3464,7 +3455,7 @@ function AddPrescriptionModal({ treatments, onClose, onSave }) {
 
   function handleSave() {
     if (!name.trim()) return;
-    const rx = { name: name.trim(), linkedTreatmentId: linkedTreatmentId || null, courseType, startDate, notes };
+    const rx = { name: name.trim(), linkedTreatmentId: linkedTreatmentId || null, courseType, startDate, notes, reminderTime: reminderTime || null };
     if (courseType === "fixed") {
       rx.doseCount = parseInt(doseCount, 10) || 0;
       rx.frequency = frequency;
@@ -3505,6 +3496,15 @@ function AddPrescriptionModal({ treatments, onClose, onSave }) {
       </div>
 
       <Field label="Start date"><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={inputStyle} /></Field>
+      <Field label="Time to take (optional)">
+        <input type="time" value={reminderTime} onChange={e => setReminderTime(e.target.value)} style={inputStyle} />
+      </Field>
+      {reminderTime && (
+        <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: -8, marginBottom: 14 }}>
+          A reminder will be sent around this time on each day a dose is due, to anyone with reminders turned on
+          in Settings → Notifications.
+        </div>
+      )}
 
       {courseType === "fixed" ? (
         <div className="tt-2col">
@@ -3556,14 +3556,14 @@ function SideEffectsTab({ treatments, prescriptions, helpline }) {
 
   return (
     <div>
-      <div style={{ background: T.warnBg, border: `1px solid ${T.warn}`, borderRadius: 10, padding: "12px 14px", marginBottom: 18, fontSize: 12, color: "#7A4E08", lineHeight: 1.55 }}>
+      <div style={{ background: T.warnBg, border: `1px solid ${T.warn}`, borderRadius: 10, padding: "12px 14px", marginBottom: 18, fontSize: 12, color: T.warnText, lineHeight: 1.55 }}>
         <strong>General reference information only, not medical advice.</strong> Not everyone experiences every
         side effect, this list may not be complete, and some effects can appear well after a treatment finishes.
         Always ask your care team what to expect for your specific treatment. If you feel unwell, develop a
         fever, or notice anything that worries you,{" "}
         {helpline ? (
           <>call your oncology helpline straight away — don't wait:{" "}
-            <a href={telHref(helpline)} style={{ color: "#7A4E08", fontWeight: 700, textDecoration: "underline" }}>{helpline}</a>.
+            <a href={telHref(helpline)} style={{ color: T.warnText, fontWeight: 700, textDecoration: "underline" }}>{helpline}</a>.
           </>
         ) : (
           <>contact your oncology team's 24-hour helpline straight away — don't wait. (Add the number under
@@ -3602,7 +3602,7 @@ function NutritionTab() {
 
   return (
     <div>
-      <div style={{ background: T.warnBg, border: `1px solid ${T.warn}`, borderRadius: 10, padding: "12px 14px", marginBottom: 18, fontSize: 12, color: "#7A4E08", lineHeight: 1.5 }}>
+      <div style={{ background: T.warnBg, border: `1px solid ${T.warn}`, borderRadius: 10, padding: "12px 14px", marginBottom: 18, fontSize: 12, color: T.warnText, lineHeight: 1.5 }}>
         <strong>General information only, not medical or dietary advice.</strong> Always check with your oncology
         team or a dietitian before changing your diet during treatment — some foods need extra care (e.g. a
         neutropenic diet), and some vitamins or supplements can interact with your medication.
@@ -3754,7 +3754,7 @@ function InsightsTab({ treatments, prescriptions, bloodsEntries }) {
 
   return (
     <div>
-      <div style={{ background: T.warnBg, border: `1px solid ${T.warn}`, borderRadius: 10, padding: "12px 14px", marginBottom: 18, fontSize: 12, color: "#7A4E08", lineHeight: 1.55 }}>
+      <div style={{ background: T.warnBg, border: `1px solid ${T.warn}`, borderRadius: 10, padding: "12px 14px", marginBottom: 18, fontSize: 12, color: T.warnText, lineHeight: 1.55 }}>
         <strong>This looks for statistical patterns in your own logged data — nothing more.</strong> It doesn't
         diagnose anything, doesn't prove one thing causes another, and isn't medical advice. Small numbers of
         instances can easily look like a pattern by chance. Always talk to your care team about anything you
@@ -3828,68 +3828,96 @@ function InsightsTab({ treatments, prescriptions, bloodsEntries }) {
 function SettingsTab({ patient, setPatient, exportBundle, onImportAll, canEdit, canManageHousehold, householdId, householdName, themeMode, setThemeMode }) {
   const [form, setForm] = useState(patient);
   const [saved, setSaved] = useState(false);
+  const [sub, setSub] = useState("patient");
   useEffect(() => setForm(patient), [patient]);
 
   function set(field, val) { setForm(prev => ({ ...prev, [field]: val })); setSaved(false); }
   function handleSave() { setPatient(form); setSaved(true); setTimeout(() => setSaved(false), 1800); }
 
+  const subTabs = [
+    { id: "patient", label: "Patient Data", icon: <User size={13} /> },
+    { id: "appearance", label: "Appearance", icon: <Sun size={13} /> },
+    { id: "household", label: "Household & Invites", icon: <Layers size={13} /> },
+    { id: "notifications", label: "Notifications", icon: <Sparkles size={13} /> },
+    { id: "backup", label: "Backup & Sharing", icon: <NotebookText size={13} /> },
+  ];
+
   return (
     <div>
-      <div className="tt-settings-card" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: T.accentDeep, marginBottom: 4 }}>Appearance</div>
-        <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 14 }}>
-          Dark mode is easier on the eyes at night or for light sensitivity. This is saved on this device only —
-          everyone in the household chooses their own.
-        </div>
-        <div style={{ display: "inline-flex", background: T.lineSoft, borderRadius: 20, padding: 3 }}>
-          <button className="tt-btn" onClick={() => setThemeMode("light")} style={{
-            display: "flex", alignItems: "center", gap: 6, borderRadius: 17, padding: "7px 16px", fontSize: 12.5, fontWeight: 600,
-            background: themeMode === "light" ? T.card : "transparent", color: themeMode === "light" ? T.ink : T.inkSoft,
-          }}><Sun size={14} /> Light</button>
-          <button className="tt-btn" onClick={() => setThemeMode("dark")} style={{
-            display: "flex", alignItems: "center", gap: 6, borderRadius: 17, padding: "7px 16px", fontSize: 12.5, fontWeight: 600,
-            background: themeMode === "dark" ? T.card : "transparent", color: themeMode === "dark" ? T.ink : T.inkSoft,
-          }}><Moon size={14} /> Dark</button>
-        </div>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-        <button className="tt-btn" style={{
-          display: "flex", alignItems: "center", gap: 7, background: T.navy, color: "#fff",
-          border: `1px solid ${T.navy}`, borderRadius: 20, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "default",
-        }}><User size={14} /> Patient Data</button>
-      </div>
-      <div style={{ fontSize: 12, color: T.inkSoft, margin: "10px 0 18px" }}>These details personalise the app and are stored only within this tool.</div>
-
-      <div className="tt-settings-card" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
-        <div className="tt-2col">
-          <Field label="Full name"><input value={form.name} onChange={e => set("name", e.target.value)} disabled={!canEdit} placeholder="e.g. Kate Smith" style={inputStyle} /></Field>
-          <Field label="Date of birth"><input type="date" value={form.dob} onChange={e => set("dob", e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
-        </div>
-        <Field label="Address"><textarea value={form.address} onChange={e => set("address", e.target.value)} rows={2} disabled={!canEdit} style={{ ...inputStyle, resize: "vertical" }} /></Field>
-        <div className="tt-2col">
-          <Field label="Height"><input value={form.height} onChange={e => set("height", e.target.value)} disabled={!canEdit} placeholder="e.g. 165 cm" style={inputStyle} /></Field>
-          <Field label="Weight"><input value={form.weight} onChange={e => set("weight", e.target.value)} disabled={!canEdit} placeholder="e.g. 62 kg" style={inputStyle} /></Field>
-        </div>
-        <Field label="Oncology helpline number">
-          <input type="tel" value={form.helpline} onChange={e => set("helpline", e.target.value)} disabled={!canEdit} placeholder="e.g. 0800 123 4567" style={inputStyle} />
-        </Field>
-        <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: -8, marginBottom: 14 }}>
-          Shown as a tap-to-call number on the Summary and Side Effects tabs — check your treatment paperwork or
-          ask your care team for the right number, since it varies by hospital and team.
-        </div>
-
-        {canEdit && (
-          <button className="tt-btn" onClick={handleSave} style={{ background: T.accent, color: "#fff", padding: "11px 20px", borderRadius: 9, fontSize: 13.5, fontWeight: 600, marginTop: 4 }}>
-            {saved ? "Saved ✓" : "Save patient details"}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
+        {subTabs.map(t => (
+          <button key={t.id} className="tt-btn" onClick={() => setSub(t.id)} style={{
+            background: sub === t.id ? T.navy : T.card, color: sub === t.id ? "#fff" : T.ink,
+            border: `1px solid ${sub === t.id ? T.navy : T.line}`, borderRadius: 20, padding: "8px 16px",
+            fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6,
+          }}>
+            {t.icon}{t.label}
           </button>
-        )}
+        ))}
       </div>
 
-      <HouseholdSection householdId={householdId} householdName={householdName} canManageHousehold={canManageHousehold} />
+      {sub === "appearance" && (
+        <div className="tt-settings-card" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.accentDeep, marginBottom: 4 }}>Appearance</div>
+          <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 14 }}>
+            Dark mode is easier on the eyes at night or for light sensitivity. This is saved on this device only —
+            everyone in the household chooses their own.
+          </div>
+          <div style={{ display: "inline-flex", background: T.lineSoft, borderRadius: 20, padding: 3 }}>
+            <button className="tt-btn" onClick={() => setThemeMode("light")} style={{
+              display: "flex", alignItems: "center", gap: 6, borderRadius: 17, padding: "7px 16px", fontSize: 12.5, fontWeight: 600,
+              background: themeMode === "light" ? T.card : "transparent", color: themeMode === "light" ? T.ink : T.inkSoft,
+            }}><Sun size={14} /> Light</button>
+            <button className="tt-btn" onClick={() => setThemeMode("dark")} style={{
+              display: "flex", alignItems: "center", gap: 6, borderRadius: 17, padding: "7px 16px", fontSize: 12.5, fontWeight: 600,
+              background: themeMode === "dark" ? T.card : "transparent", color: themeMode === "dark" ? T.ink : T.inkSoft,
+            }}><Moon size={14} /> Dark</button>
+          </div>
+        </div>
+      )}
 
-      <NotificationsSection />
+      {sub === "patient" && (
+        <div className="tt-settings-card" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.accentDeep, marginBottom: 4 }}>Patient Data</div>
+          <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 14 }}>These details personalise the app and are stored only within this tool.</div>
+          <div className="tt-2col">
+            <Field label="Full name"><input value={form.name} onChange={e => set("name", e.target.value)} disabled={!canEdit} placeholder="e.g. Kate Smith" style={inputStyle} /></Field>
+            <Field label="Date of birth"><input type="date" value={form.dob} onChange={e => set("dob", e.target.value)} disabled={!canEdit} style={inputStyle} /></Field>
+          </div>
+          <Field label="Address"><textarea value={form.address} onChange={e => set("address", e.target.value)} rows={2} disabled={!canEdit} style={{ ...inputStyle, resize: "vertical" }} /></Field>
+          <div className="tt-2col">
+            <Field label="Height"><input value={form.height} onChange={e => set("height", e.target.value)} disabled={!canEdit} placeholder="e.g. 165 cm" style={inputStyle} /></Field>
+            <Field label="Weight"><input value={form.weight} onChange={e => set("weight", e.target.value)} disabled={!canEdit} placeholder="e.g. 62 kg" style={inputStyle} /></Field>
+          </div>
+          <Field label="Oncology helpline number">
+            <input type="tel" value={form.helpline} onChange={e => set("helpline", e.target.value)} disabled={!canEdit} placeholder="e.g. 0800 123 4567" style={inputStyle} />
+          </Field>
+          <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: -8, marginBottom: 14 }}>
+            Shown as a tap-to-call number on the Summary and Side Effects tabs — check your treatment paperwork or
+            ask your care team for the right number, since it varies by hospital and team.
+          </div>
 
-      {canManageHousehold && <BackupSection exportBundle={exportBundle} onImportAll={onImportAll} />}
+          {canEdit && (
+            <button className="tt-btn" onClick={handleSave} style={{ background: T.accent, color: "#fff", padding: "11px 20px", borderRadius: 9, fontSize: 13.5, fontWeight: 600, marginTop: 4 }}>
+              {saved ? "Saved ✓" : "Save patient details"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {sub === "household" && (
+        <HouseholdSection householdId={householdId} householdName={householdName} canManageHousehold={canManageHousehold} />
+      )}
+
+      {sub === "notifications" && <NotificationsSection />}
+
+      {sub === "backup" && (
+        canManageHousehold
+          ? <BackupSection exportBundle={exportBundle} onImportAll={onImportAll} />
+          : <div className="tt-settings-card" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20, fontSize: 12.5, color: T.inkSoft }}>
+              Only the owner or an admin can back up, export, or restore data.
+            </div>
+      )}
 
       <div style={{ display: "flex", justifyContent: "center", padding: "24px 0 8px" }}>
         <img src="/lockup-light.svg" alt="CareTrack" style={{ height: 26, width: "auto", opacity: 0.7 }} />
@@ -3906,7 +3934,10 @@ function NotificationsSection() {
   const [checking, setChecking] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [prefs, setPrefsState] = useState({ new_data_enabled: true, reminders_enabled: true });
+  const [prefs, setPrefsState] = useState({
+    reminders_enabled: true, treatment_completed_enabled: true, new_treatments_enabled: true,
+    new_appointments_enabled: true, new_results_enabled: true, support_messages_enabled: true,
+  });
 
   useEffect(() => {
     (async () => {
@@ -3945,16 +3976,31 @@ function NotificationsSection() {
     await setNotificationPrefs(next);
   }
 
+  const [testBusy, setTestBusy] = useState(false);
+  const [testResult, setTestResult] = useState("");
+
+  async function handleSendTest() {
+    setTestBusy(true); setTestResult("");
+    try {
+      const sent = await sendTestNotification();
+      setTestResult(sent > 0 ? "Sent — check this device in a moment." : "Nothing was sent. If you just turned notifications on, try again in a few seconds.");
+    } catch (e) {
+      setTestResult(e.message || "Couldn't send a test notification.");
+    } finally {
+      setTestBusy(false);
+    }
+  }
+
   const supported = typeof navigator !== "undefined" && "serviceWorker" in navigator && "PushManager" in window;
 
   return (
     <div className="tt-settings-card" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: T.accentDeep, marginBottom: 4 }}>Notifications</div>
       <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 16, lineHeight: 1.5 }}>
-        Get notified on this device when new treatments, appointments, or results are added, and a reminder 24
-        hours ahead of an appointment or treatment. This is per-device — you'll need to turn it on separately on
-        your phone and your computer, for example. On iPhone, this only works once the app's been added to your
-        Home Screen (Share → Add to Home Screen) — a Safari tab on its own can't receive push notifications.
+        Every category below is on by default once you turn on notifications for this device — switch off
+        whichever ones you don't want. This is per-device — you'll need to turn it on separately on your phone and
+        your computer, for example. On iPhone, this only works once the app's been added to your Home Screen
+        (Share → Add to Home Screen) — a Safari tab on its own can't receive push notifications.
       </div>
 
       {checking ? null : !supported ? (
@@ -3972,6 +4018,15 @@ function NotificationsSection() {
         </div>
       )}
 
+      {subscribed && (
+        <div style={{ marginBottom: 16 }}>
+          <button className="tt-btn" onClick={handleSendTest} disabled={testBusy} style={{ background: T.lineSoft, color: T.ink, borderRadius: 9, padding: "8px 14px", fontSize: 12.5, fontWeight: 600 }}>
+            {testBusy ? "Sending…" : "Send myself a test notification"}
+          </button>
+          {testResult && <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 6 }}>{testResult}</div>}
+        </div>
+      )}
+
       {error && <div style={{ fontSize: 12, color: T.breach, marginBottom: 12 }}>{error}</div>}
       {permission === "denied" && (
         <div style={{ fontSize: 12, color: T.breach, marginBottom: 12 }}>
@@ -3983,11 +4038,27 @@ function NotificationsSection() {
       {!checking && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 4 }}>
           <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, cursor: "pointer" }}>
-            <span style={{ fontSize: 12.5, color: T.ink }}>New treatments, appointments and results added</span>
-            <input type="checkbox" checked={prefs.new_data_enabled} onChange={() => togglePref("new_data_enabled")} style={{ width: 18, height: 18, accentColor: T.accent, flexShrink: 0 }} />
+            <span style={{ fontSize: 12.5, color: T.ink }}>Treatment marked as completed</span>
+            <input type="checkbox" checked={prefs.treatment_completed_enabled} onChange={() => togglePref("treatment_completed_enabled")} style={{ width: 18, height: 18, accentColor: T.accent, flexShrink: 0 }} />
           </label>
           <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, cursor: "pointer" }}>
-            <span style={{ fontSize: 12.5, color: T.ink }}>Reminders 24 hours before an appointment or treatment</span>
+            <span style={{ fontSize: 12.5, color: T.ink }}>New treatments added</span>
+            <input type="checkbox" checked={prefs.new_treatments_enabled} onChange={() => togglePref("new_treatments_enabled")} style={{ width: 18, height: 18, accentColor: T.accent, flexShrink: 0 }} />
+          </label>
+          <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, cursor: "pointer" }}>
+            <span style={{ fontSize: 12.5, color: T.ink }}>New appointments added</span>
+            <input type="checkbox" checked={prefs.new_appointments_enabled} onChange={() => togglePref("new_appointments_enabled")} style={{ width: 18, height: 18, accentColor: T.accent, flexShrink: 0 }} />
+          </label>
+          <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, cursor: "pointer" }}>
+            <span style={{ fontSize: 12.5, color: T.ink }}>New results added (bloods &amp; measurements)</span>
+            <input type="checkbox" checked={prefs.new_results_enabled} onChange={() => togglePref("new_results_enabled")} style={{ width: 18, height: 18, accentColor: T.accent, flexShrink: 0 }} />
+          </label>
+          <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, cursor: "pointer" }}>
+            <span style={{ fontSize: 12.5, color: T.ink }}>Messages of support</span>
+            <input type="checkbox" checked={prefs.support_messages_enabled} onChange={() => togglePref("support_messages_enabled")} style={{ width: 18, height: 18, accentColor: T.accent, flexShrink: 0 }} />
+          </label>
+          <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, cursor: "pointer" }}>
+            <span style={{ fontSize: 12.5, color: T.ink }}>Reminders — 24 hours before an appointment/treatment, and prescription times</span>
             <input type="checkbox" checked={prefs.reminders_enabled} onChange={() => togglePref("reminders_enabled")} style={{ width: 18, height: 18, accentColor: T.accent, flexShrink: 0 }} />
           </label>
         </div>
