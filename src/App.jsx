@@ -1380,7 +1380,7 @@ function ContentsTab({ onNavigate, possessive }) {
 // ================= SUMMARY DASHBOARD TAB =================
 function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder, supportMessage, onNavigate, featuredMsg, featuredSummary }) {
   const today = todayStr();
-  const sorted = useMemo(() => [...treatments].sort((a, b) => a.date.localeCompare(b.date)), [treatments]);
+  const sorted = useMemo(() => treatments.filter(t => t.date).sort((a, b) => a.date.localeCompare(b.date)), [treatments]);
 
   const nextTreatment = useMemo(
     () => sorted.find(t => t.status !== "Completed" && t.status !== "Skipped" && t.date >= today),
@@ -1773,7 +1773,7 @@ function ViewToggleBtn({ active, onClick, icon, label }) {
 }
 
 function SummaryView({ treatments, onRowClick }) {
-  const sorted = useMemo(() => [...treatments].sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || "")), [treatments]);
+  const sorted = useMemo(() => treatments.filter(t => t.date).sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || "")), [treatments]);
   const today = todayStr();
   if (sorted.length === 0) {
     return <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>No treatments added yet.</div>;
@@ -2421,8 +2421,8 @@ function BloodElementPanel({ elementName, meta, isOther, entries, onAdd, onDelet
     setScore("");
   }, [elementName]); // eslint-disable-line
 
-  const sorted = useMemo(() => [...entries].sort((a, b) => b.date.localeCompare(a.date)), [entries]);
-  const knownDescriptions = useMemo(() => Array.from(new Set(entries.map(e => e.description))), [entries]);
+  const sorted = useMemo(() => entries.filter(e => e.date).sort((a, b) => b.date.localeCompare(a.date)), [entries]);
+  const knownDescriptions = useMemo(() => Array.from(new Set(entries.map(e => e.description).filter(Boolean))), [entries]);
 
   function handleAdd() {
     const desc = isOther ? description.trim() : elementName;
@@ -2524,7 +2524,7 @@ function MeasurementsEntryPanel({ entries, onAdd, onDelete, canEdit = true }) {
     setScore("");
   }, [scanType]);
 
-  const sorted = useMemo(() => [...entries].sort((a, b) => b.date.localeCompare(a.date)), [entries]);
+  const sorted = useMemo(() => entries.filter(e => e.date).sort((a, b) => b.date.localeCompare(a.date)), [entries]);
 
   function handleAdd() {
     if (!scanType || !date) return;
@@ -2587,6 +2587,7 @@ function MeasurementsSummaryTable({ entries }) {
   const grouped = useMemo(() => {
     const map = {};
     entries.forEach(e => {
+      if (!e.description || !e.date) return; // skip malformed/legacy entries rather than crash on them
       const v = parseFloat(e.score);
       if (isNaN(v)) return;
       if (!map[e.description]) map[e.description] = [];
@@ -2676,7 +2677,7 @@ function MeasurementsSummaryTable({ entries }) {
   // labelled with its scan type.
   const combinedChartData = useMemo(() => {
     return entries
-      .filter(e => !isNaN(parseFloat(e.score)))
+      .filter(e => e.date && !isNaN(parseFloat(e.score)))
       .map(e => ({ date: e.date, value: parseFloat(e.score), type: e.description }))
       .sort((a, b) => a.date.localeCompare(b.date));
   }, [entries]);
@@ -2906,7 +2907,7 @@ function AppointmentChip({ a, onClick }) {
 }
 
 function AppointmentNotesSummary({ appointments, onUpdate, onRowClick }) {
-  const sorted = useMemo(() => [...appointments].sort((a, b) => b.date.localeCompare(a.date) || (b.time || "").localeCompare(a.time || "")), [appointments]);
+  const sorted = useMemo(() => appointments.filter(a => a.date).sort((a, b) => b.date.localeCompare(a.date) || (b.time || "").localeCompare(a.time || "")), [appointments]);
   const [regenerating, setRegenerating] = useState(null);
 
   async function regenerate(a) {
@@ -3071,7 +3072,7 @@ function SupportMessagesTab({ messages, onAdd, onDelete, canDelete }) {
     setExpandedId(prev => (prev === id ? null : prev));
   }
 
-  const sorted = useMemo(() => [...messages].sort((a, b) => b.date.localeCompare(a.date)), [messages]);
+  const sorted = useMemo(() => messages.filter(m => m.date).sort((a, b) => b.date.localeCompare(a.date)), [messages]);
 
   return (
     <div>
@@ -3352,7 +3353,7 @@ function PrescriptionsTab({ prescriptions, setPrescriptions, treatments, canEdit
     setExpandedId(prev => (prev === id ? null : prev));
   }
 
-  const sortedTreatments = useMemo(() => [...treatments].sort((a, b) => a.date.localeCompare(b.date)), [treatments]);
+  const sortedTreatments = useMemo(() => treatments.filter(t => t.date).sort((a, b) => a.date.localeCompare(b.date)), [treatments]);
   const sorted = useMemo(() => [...prescriptions].sort((a, b) => (b.startDate || "").localeCompare(a.startDate || "")), [prescriptions]);
 
   return (
@@ -3676,6 +3677,7 @@ function findLocalPatterns(treatments, prescriptions, bloodEntries) {
 
   const bloodsByType = {};
   (bloodEntries || []).forEach(e => {
+    if (!e.description || !e.date) return;
     const v = parseFloat(e.score);
     if (isNaN(v)) return;
     (bloodsByType[e.description] = bloodsByType[e.description] || []).push({ date: e.date, value: v });
