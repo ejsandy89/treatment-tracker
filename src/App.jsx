@@ -2195,6 +2195,10 @@ function BloodsSummaryTable({ bloodsEntries }) {
   // (no + sign needed — the green colour already signals a positive move).
   function fmtDelta(diff, pct) {
     const diffStr = diff < 0 ? `(${Math.abs(diff).toFixed(1)})` : diff.toFixed(1);
+    // pctChange() returns null when the previous/normal value was exactly 0
+    // (a % change from zero is mathematically undefined) — show just the
+    // plain difference in that case rather than crashing on pct.toFixed().
+    if (pct === null || pct === undefined || !isFinite(pct)) return diffStr;
     const pctStr = pct < 0 ? `(${Math.abs(pct).toFixed(0)}%)` : `${pct.toFixed(0)}%`;
     return `${diffStr} ${pctStr}`;
   }
@@ -2623,6 +2627,10 @@ function MeasurementsSummaryTable({ entries }) {
   }
   function fmtDelta(diff, pct) {
     const diffStr = diff < 0 ? `(${Math.abs(diff).toFixed(1)})` : diff.toFixed(1);
+    // pctChange() returns null when the previous/normal value was exactly 0
+    // (a % change from zero is mathematically undefined) — show just the
+    // plain difference in that case rather than crashing on pct.toFixed().
+    if (pct === null || pct === undefined || !isFinite(pct)) return diffStr;
     const pctStr = pct < 0 ? `(${Math.abs(pct).toFixed(0)}%)` : `${pct.toFixed(0)}%`;
     return `${diffStr} ${pctStr}`;
   }
