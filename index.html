@@ -3,17 +3,30 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#2E3746" />
-    <title>Treatment Tracker</title>
-    <link rel="icon" href="/icon-192.png" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <meta name="theme-color" content="#16403F" />
+    <title>CareTrack</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Tracker" />
+    <meta name="apple-mobile-web-app-title" content="CareTrack" />
     <style>
       html, body, #root { height: 100%; margin: 0; }
-      body { background: #F6F7F8; }
+      body { background: #F5F1E9; }
     </style>
+    <script>
+      // Runs before anything paints, so someone with dark mode saved doesn't
+      // see a flash of the light background while the app loads.
+      try {
+        if (localStorage.getItem("tt-theme-mode") === "dark") {
+          document.write('<style>body{background:#0B211F}</style>');
+          document.querySelector('meta[name="theme-color"]')?.setAttribute("content", "#0A1E1D");
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

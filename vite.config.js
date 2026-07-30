@@ -7,30 +7,26 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["icon-192.png", "icon-512.png"],
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.js",
+      injectManifest: {
+        // Keep this modest — the app shell itself, not every asset.
+        globPatterns: ["**/*.{js,css,html,svg,png,ico}"],
+      },
+      includeAssets: ["icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png", "favicon.svg", "favicon-16.png", "favicon-32.png"],
       manifest: {
-        name: "Treatment Tracker",
-        short_name: "Tracker",
+        name: "CareTrack",
+        short_name: "CareTrack",
         description: "Treatment calendar, appointments and test results tracker",
         start_url: "/",
         display: "standalone",
-        background_color: "#F6F7F8",
-        theme_color: "#2E3746",
+        background_color: "#F3EFE6",
+        theme_color: "#16403F",
         icons: [
-          { src: "icon-192.png", sizes: "192x192", type: "image/png" },
-          { src: "icon-512.png", sizes: "512x512", type: "image/png" },
-          { src: "icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
-        ],
-      },
-      workbox: {
-        // Cache the app shell so it opens even with a flaky connection.
-        // API calls to Netlify Functions are always fetched fresh (not cached),
-        // since this is live patient data.
-        runtimeCaching: [
-          {
-            urlPattern: /\/\.netlify\/functions\//,
-            handler: "NetworkOnly",
-          },
+          { src: "icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: "icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+          { src: "icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
         ],
       },
     }),

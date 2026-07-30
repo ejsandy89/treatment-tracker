@@ -6,15 +6,17 @@
 [functions]
   node_bundler = "esbuild"
 
-# The "blob" function is required now — it's what makes data live and shared
-# across everyone who opens this site (Netlify Blobs behind the scenes).
-# "summarise" is still optional: it powers real AI note summaries if you set
-# an ANTHROPIC_API_KEY. Without it, the app falls back to a simple built-in
-# summary automatically.
-#
-# Both functions need a CLI or Git-connected deploy to actually run — plain
-# drag-and-drop of the "dist" folder will NOT deploy them, and the app won't
-# save/sync data in that case. See the README.
+# Data storage, accounts, and permissions are handled entirely by Supabase
+# (set as VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY environment variables —
+# see README). Netlify Functions in this project:
+#   - summarise.js            optional AI note summaries (needs ANTHROPIC_API_KEY)
+#   - analyse-patterns.js      optional AI explanation for the Insights tab (needs ANTHROPIC_API_KEY)
+#   - send-notification.js    sends a push notification when new data is added
+#   - appointment-reminders.mjs  scheduled (hourly) 24-hour-ahead reminders
+# The last two need VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and
+# SUPABASE_SERVICE_ROLE_KEY — see README for how to set these up. Every
+# function here is optional in the sense that the rest of the app works
+# fine without it; you just won't get that particular feature.
 
 [[headers]]
   for = "/*"
