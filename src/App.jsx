@@ -196,6 +196,37 @@ const BLOOD_NORMALS = Object.fromEntries(BLOOD_ELEMENTS.map(e => [e.key, e]));
 const HAEMATOLOGY_KEYS = HAEMATOLOGY_ELEMENTS.map(e => e.key);
 const BIOCHEMISTRY_KEYS = BIOCHEMISTRY_ELEMENTS.map(e => e.key);
 
+// Commonly used short names/abbreviations, as seen on a typical lab report —
+// used only for display on the Bloods Summary table, to keep it compact on
+// a phone screen. The full name is still used everywhere else in the app
+// (add forms, charts, filters, etc.).
+const BLOOD_SHORT_NAMES = {
+  "Haemoglobin": "Hb",
+  "White Cell Count": "WCC",
+  "Platelet Count": "Platelets",
+  "Red Blood Cell Count": "RBC",
+  "Haematocrit": "Hct",
+  "Mean Cell Volume": "MCV",
+  "Mean Cell Haemoglobin": "MCH",
+  "Neutrophils": "Neuts",
+  "Lymphocytes": "Lymphs",
+  "Monocytes": "Monos",
+  "Eosinophils": "Eos",
+  "Basophils": "Baso",
+  "Sodium": "Na",
+  "Potassium": "K",
+  "Urea": "Urea",
+  "Creatinine": "Creat",
+  "Calcium": "Ca",
+  "Adjusted Calcium": "Adj Ca",
+  "Magnesium": "Mg",
+  "Inorganic Phosphate": "Phosphate",
+  "Albumin": "Alb",
+  "Alanine Transaminase": "ALT",
+  "Alkaline Phosphatase": "ALP",
+  "Total Bilirubin": "Bilirubin",
+};
+
 // General nutrition reference info, keyed to each blood element. This is
 // deliberately general public-health information (which foods commonly
 // contain which nutrients) rather than any kind of dietary prescription —
@@ -2185,6 +2216,7 @@ function BloodsSummaryTable({ bloodsEntries }) {
 
   const [filterType, setFilterType] = useState("");
   const [modalChartType, setModalChartType] = useState(null);
+  const [compareMode, setCompareMode] = useState("previous"); // "previous" | "normal"
   const [sortKey, setSortKey] = useState("type");
   const [sortDir, setSortDir] = useState("asc");
 
@@ -2212,8 +2244,10 @@ function BloodsSummaryTable({ bloodsEntries }) {
     const meta = BLOOD_NORMALS[type];
     const changePct = previous ? pctChange(recent.value, previous.value) : null;
     const normalPct = meta ? pctChange(recent.value, meta.normal) : null;
-    const unit = recent.unit || (meta ? meta.unit : "");
 
+    // Did the most recent result move closer to, or further from, normal
+    // compared to the previous result? Used to colour/flag the row,
+    // regardless of which comparison (previous or normal) is on-screen.
     let movingCloser = null;
     if (meta && previous) {
       const distBefore = Math.abs(previous.value - meta.normal);
@@ -2224,31 +2258,28 @@ function BloodsSummaryTable({ bloodsEntries }) {
     const isBigMove = changePct !== null && Math.abs(changePct) > 20;
     const rowFlagged = isBigMove && movingCloser === false;
 
-    return { type, unit, recent, previous, meta, changePct, normalPct, movingCloser, rowFlagged };
+    return { type, recent, previous, meta, changePct, normalPct, movingCloser, rowFlagged };
   }), [types, grouped]);
 
-  // "Type" gets a width that fits the longest label here; every other column
-  // is a single short number, so they can all share one narrow width —
-  // keeping as much of the table on-screen at once as possible on a phone.
+  // "Type" gets a width that fits the longest short name here; every other
+  // column is a single short number, so they can all share one narrow
+  // width — keeping as much of the table on-screen at once as possible.
   const typeColWidth = useMemo(() => {
     let chars = 4;
-    rowData.forEach(r => {
-      const label = `${r.type}${r.unit ? ` (${r.unit})` : ""}`;
-      chars = Math.max(chars, label.length);
-    });
+    rowData.forEach(r => { chars = Math.max(chars, (BLOOD_SHORT_NAMES[r.type] || r.type).length); });
     return `${chars + 2}ch`;
   }, [rowData]);
-  const numColWidth = "52px";
+  const numColWidth = "58px";
 
   function getSortValue(r, key) {
     if (key === "type") return r.type;
-    if (key === "previous") return r.previous ? r.previous.value : null;
     if (key === "recent") return r.recent.value;
-    if (key === "changeActual") return r.previous ? r.recent.value - r.previous.value : null;
-    if (key === "changePct") return r.changePct;
-    if (key === "normal") return r.meta ? r.meta.normal : null;
-    if (key === "vsNormalActual") return r.meta ? r.recent.value - r.meta.normal : null;
-    if (key === "vsNormalPct") return r.normalPct;
+    if (key === "comparison") return compareMode === "previous" ? (r.previous ? r.previous.value : null) : (r.meta ? r.meta.normal : null);
+    if (key === "changeActual") {
+      if (compareMode === "previous") return r.previous ? r.recent.value - r.previous.value : null;
+      return r.meta ? r.recent.value - r.meta.normal : null;
+    }
+    if (key === "changePct") return compareMode === "previous" ? r.changePct : r.normalPct;
     return null;
   }
 
@@ -2264,7 +2295,7 @@ function BloodsSummaryTable({ bloodsEntries }) {
       if (bMissing) return -1;
       return sortDir === "asc" ? av - bv : bv - av;
     });
-  }, [rowData, filterType, sortKey, sortDir]);
+  }, [rowData, filterType, sortKey, sortDir, compareMode]);
 
   function handleSort(key) {
     if (sortKey === key) setSortDir(d => (d === "asc" ? "desc" : "asc"));
@@ -2275,35 +2306,51 @@ function BloodsSummaryTable({ bloodsEntries }) {
     return <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>No results recorded yet.</div>;
   }
 
+  const comparisonLabel = compareMode === "previous" ? "Previous" : "Normal";
+
   return (
     <div>
       <div style={{ fontSize: 11.5, color: T.inkSoft, marginBottom: 12, lineHeight: 1.5 }}>
         Comparison of the latest 2 results. Click a measure to view a graph of recorded results.
       </div>
-      <div style={{ marginBottom: 14, maxWidth: 260 }}>
-        <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Filter by type</div>
-        <select className="tt-select" value={filterType} onChange={e => setFilterType(e.target.value)} style={inputStyle}>
-          <option value="">All types</option>
-          {types.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={{ maxWidth: 260 }}>
+          <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Filter by type</div>
+          <select className="tt-select" value={filterType} onChange={e => setFilterType(e.target.value)} style={inputStyle}>
+            <option value="">All types</option>
+            {types.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Compare to</div>
+          <div style={{ display: "inline-flex", background: T.lineSoft, borderRadius: 20, padding: 3 }}>
+            <button className="tt-btn" onClick={() => setCompareMode("previous")} style={{
+              borderRadius: 17, padding: "8px 14px", fontSize: 12.5, fontWeight: 600,
+              background: compareMode === "previous" ? T.card : "transparent", color: compareMode === "previous" ? T.ink : T.inkSoft,
+            }}>Previous result</button>
+            <button className="tt-btn" onClick={() => setCompareMode("normal")} style={{
+              borderRadius: 17, padding: "8px 14px", fontSize: 12.5, fontWeight: 600,
+              background: compareMode === "normal" ? T.card : "transparent", color: compareMode === "normal" ? T.ink : T.inkSoft,
+            }}>Normal</button>
+          </div>
+        </div>
       </div>
       <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12 }}>
         <table style={{ borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed", minWidth: 0, width: "100%" }}>
           <thead>
             <tr style={{ background: T.paper, textAlign: "left" }}>
               <SortableTh label="Type" sortKeyName="type" width={typeColWidth} sticky sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Prev." sortKeyName="previous" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Recent" sortKeyName="recent" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label={comparisonLabel} sortKeyName="comparison" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Δ" sortKeyName="changeActual" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortableTh label="Δ%" sortKeyName="changePct" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Normal" sortKeyName="normal" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Δ norm" sortKeyName="vsNormalActual" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Δ% norm" sortKeyName="vsNormalPct" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
           <tbody>
             {displayRows.map(r => {
-              const { type, unit, recent, previous, meta, changePct, normalPct, movingCloser, rowFlagged } = r;
+              const { type, recent, previous, meta, changePct, normalPct, movingCloser, rowFlagged } = r;
+              const comparisonPoint = compareMode === "previous" ? previous : (meta ? { value: meta.normal } : null);
+              const comparisonPct = compareMode === "previous" ? changePct : normalPct;
               const movementColor = movingCloser === true ? T.ok : movingCloser === false ? T.breach : T.ink;
               const rowStyle = rowFlagged
                 ? { borderTop: `1px solid ${T.lineSoft}`, background: T.warnBg, fontWeight: 700 }
@@ -2321,25 +2368,15 @@ function BloodsSummaryTable({ bloodsEntries }) {
                       position: "sticky", left: 0, background: rowFlagged ? T.warnBg : T.card, zIndex: 2,
                     }}
                   >
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                      <TrendingUp size={11} style={{ color: T.inkSoft, flexShrink: 0 }} />
-                      {type}{unit && <span style={{ color: T.inkSoft, fontWeight: 400 }}> ({unit})</span>}
-                    </span>
+                    {BLOOD_SHORT_NAMES[type] || type}
                   </td>
-                  <td style={numStyle}>{previous ? previous.value : "—"}</td>
                   <td style={numStyle}>{recent.value}</td>
+                  <td style={numStyle}>{comparisonPoint ? comparisonPoint.value : "—"}</td>
                   <td style={{ ...numStyle, color: movementColor, fontWeight: rowFlagged ? 700 : 400 }}>
-                    {previous ? fmtActual(recent.value - previous.value) : "—"}
+                    {comparisonPoint ? fmtActual(recent.value - comparisonPoint.value) : "—"}
                   </td>
                   <td style={{ ...numStyle, color: movementColor, fontWeight: rowFlagged ? 700 : 400 }}>
-                    {previous ? fmtPct(changePct) : "—"}
-                  </td>
-                  <td style={numStyle}>{meta ? meta.normal : "—"}</td>
-                  <td style={{ ...numStyle, color: movementColor, fontWeight: rowFlagged ? 700 : 400 }}>
-                    {meta ? fmtActual(recent.value - meta.normal) : "—"}
-                  </td>
-                  <td style={{ ...numStyle, color: movementColor, fontWeight: rowFlagged ? 700 : 400 }}>
-                    {meta ? fmtPct(normalPct) : "—"}
+                    {comparisonPoint ? fmtPct(comparisonPct) : "—"}
                   </td>
                 </tr>
               );
@@ -3266,11 +3303,12 @@ function GuidanceTab() {
               <li>Save — it's added to that element's history.</li>
             </ol>
             <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6 }}>
-              The Summary tab lays out the two most recent results for each element, with the change since the
-              last result and the change against the normal range each split into the actual amount and the
-              percentage, and anything moving by more than 20% highlighted. Tap a column heading to sort by it.
-              Tap a type's name to pop open its trend chart. Pick a type from the dropdown instead to filter the
-              table down to just that row, with its chart shown underneath.
+              The Summary tab shows the two most recent results for each element, using short lab-style names
+              (e.g. Hb, ALT) to keep it compact. Use "Compare to" to switch between comparing the most recent
+              result with the previous one or with the typical normal value — the change is split into the actual
+              amount and the percentage, and anything moving by more than 20% away from normal is highlighted. Tap
+              a column heading to sort by it. Tap a type's name to pop open its trend chart; pick a type from the
+              dropdown instead to filter the table down to just that row, with its chart shown underneath.
             </div>
           </div>
 
