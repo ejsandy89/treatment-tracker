@@ -329,6 +329,8 @@ const DRUG_SIDE_EFFECTS = {
   "paclitaxel": ["Tingling or numbness in hands/feet (peripheral neuropathy)", "Hair loss", "Joint and muscle aches", "Low blood counts", "Possible allergic reaction during infusion"],
   "docetaxel": ["Fluid retention", "Nail changes", "Fatigue", "Low blood counts", "Hair loss", "Mouth sores"],
   "doxorubicin": ["Hair loss", "Nausea", "Mouth sores", "Low blood counts", "Red or orange-tinted urine (harmless)", "Possible heart effects with cumulative dose"],
+  "epirubicin": ["Hair loss", "Nausea", "Mouth sores", "Low blood counts", "Red or orange-tinted urine (harmless)", "Possible heart effects with cumulative dose"],
+  "pharmorubicin": ["Hair loss", "Nausea", "Mouth sores", "Low blood counts", "Red or orange-tinted urine (harmless)", "Possible heart effects with cumulative dose"],
   "cyclophosphamide": ["Nausea", "Hair loss", "Low blood counts", "Bladder irritation — stay well hydrated", "Fatigue"],
   "fluorouracil": ["Mouth sores", "Diarrhoea", "Sensitivity to sunlight", "Redness or soreness of palms and soles (hand-foot syndrome)", "Low blood counts"],
   "5-fu": ["Mouth sores", "Diarrhoea", "Sensitivity to sunlight", "Redness or soreness of palms and soles (hand-foot syndrome)", "Low blood counts"],
@@ -370,6 +372,11 @@ function matchDrugSideEffects(name) {
 // in the app — falling back to a generic per-treatment-type list only when
 // a specific drug name isn't recognised, so results only ever reflect what
 // the person has actually logged.
+function capitalizeFirst(str) {
+  if (!str) return str;
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
 function buildSideEffectGroups(treatments, prescriptions) {
   const groups = [];
   const seenSources = new Set();
@@ -393,7 +400,7 @@ function buildSideEffectGroups(treatments, prescriptions) {
       seenSources.add(key);
       const matched = matchDrugSideEffects(d);
       if (matched) {
-        groups.push({ source: d, sourceNote: typeLabel, effects: matched });
+        groups.push({ source: capitalizeFirst(d), sourceNote: typeLabel, effects: matched });
       } else if (!seenGenericTypes.has(typeLabel)) {
         seenGenericTypes.add(typeLabel);
         groups.push({ source: typeLabel, sourceNote: "Treatment type (drug not recognised)", effects: GENERIC_SIDE_EFFECTS[t.type] || GENERIC_SIDE_EFFECTS.Other });
@@ -407,7 +414,7 @@ function buildSideEffectGroups(treatments, prescriptions) {
     if (seenSources.has(key)) return;
     seenSources.add(key);
     const matched = matchDrugSideEffects(rx.name);
-    if (matched) groups.push({ source: rx.name, sourceNote: "Prescription", effects: matched });
+    if (matched) groups.push({ source: capitalizeFirst(rx.name), sourceNote: "Prescription", effects: matched });
   });
 
   return groups;
@@ -1519,7 +1526,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
       ) : <div style={{ fontSize: 13, color: T.inkSoft }}>No treatments logged yet</div>,
     },
     nextType: {
-      icon: <TrendingUp size={16} />, label: "Next new treatment type", accent: T.navy,
+      icon: <TrendingUp size={16} />, label: "Next new treatment type", accent: T.accentDeep,
       nav: () => onNavigate("calendar", "summary"),
       content: phase && phase.nextType ? (
         <>
@@ -1569,7 +1576,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
     <div>
       {supportMessage && (
         <div style={{
-          fontSize: 24, fontWeight: 800, color: T.navy, marginBottom: 18, lineHeight: 1.3,
+          fontSize: 24, fontWeight: 800, color: T.accentDeep, marginBottom: 18, lineHeight: 1.3,
           display: "flex", alignItems: "center", gap: 10,
         }}>
           <Heart size={22} fill="#C9857E" color="#C9857E" style={{ flexShrink: 0 }} />
@@ -2176,12 +2183,6 @@ function BloodsSummaryTable({ bloodsEntries }) {
     });
   }, [grouped]);
 
-  const allDates = useMemo(() => {
-    const s = new Set();
-    Object.values(grouped).forEach(arr => arr.forEach(r => s.add(r.date)));
-    return Array.from(s).sort((a, b) => a.localeCompare(b));
-  }, [grouped]);
-
   const [filterType, setFilterType] = useState("");
   const [modalChartType, setModalChartType] = useState(null);
   const [sortKey, setSortKey] = useState("type");
@@ -2193,20 +2194,19 @@ function BloodsSummaryTable({ bloodsEntries }) {
   }
   // Accounting-style formatting: negatives in brackets, positives shown plain
   // (no + sign needed — the green colour already signals a positive move).
-  function fmtDelta(diff, pct) {
-    const diffStr = diff < 0 ? `(${Math.abs(diff).toFixed(1)})` : diff.toFixed(1);
+  function fmtActual(diff) {
+    return diff < 0 ? `(${Math.abs(diff).toFixed(1)})` : diff.toFixed(1);
+  }
+  function fmtPct(pct) {
     // pctChange() returns null when the previous/normal value was exactly 0
-    // (a % change from zero is mathematically undefined) — show just the
-    // plain difference in that case rather than crashing on pct.toFixed().
-    if (pct === null || pct === undefined || !isFinite(pct)) return diffStr;
-    const pctStr = pct < 0 ? `(${Math.abs(pct).toFixed(0)}%)` : `${pct.toFixed(0)}%`;
-    return `${diffStr} ${pctStr}`;
+    // (a % change from zero is mathematically undefined).
+    if (pct === null || pct === undefined || !isFinite(pct)) return "—";
+    return pct < 0 ? `(${Math.abs(pct).toFixed(0)}%)` : `${pct.toFixed(0)}%`;
   }
 
   // Pre-compute everything each row needs, once, so filtering/sorting below is cheap.
   const rowData = useMemo(() => types.map(type => {
     const rows = grouped[type];
-    const byDate = Object.fromEntries(rows.map(r => [r.date, r.value]));
     const recent = rows[rows.length - 1];
     const previous = rows.length > 1 ? rows[rows.length - 2] : null;
     const meta = BLOOD_NORMALS[type];
@@ -2224,12 +2224,12 @@ function BloodsSummaryTable({ bloodsEntries }) {
     const isBigMove = changePct !== null && Math.abs(changePct) > 20;
     const rowFlagged = isBigMove && movingCloser === false;
 
-    return { type, unit, byDate, recent, previous, meta, changePct, normalPct, movingCloser, rowFlagged };
+    return { type, unit, recent, previous, meta, changePct, normalPct, movingCloser, rowFlagged };
   }), [types, grouped]);
 
   // "Type" gets a width that fits the longest label here; every other column
-  // shares one consistent width, set generously enough for the longest
-  // change/vs-normal value (e.g. "(125.0) (45%)").
+  // is a single short number, so they can all share one narrow width —
+  // keeping as much of the table on-screen at once as possible on a phone.
   const typeColWidth = useMemo(() => {
     let chars = 4;
     rowData.forEach(r => {
@@ -2238,14 +2238,18 @@ function BloodsSummaryTable({ bloodsEntries }) {
     });
     return `${chars + 2}ch`;
   }, [rowData]);
-  const otherColWidth = "108px";
+  const numColWidth = "52px";
 
   function getSortValue(r, key) {
     if (key === "type") return r.type;
-    if (key === "change") return r.changePct;
+    if (key === "previous") return r.previous ? r.previous.value : null;
+    if (key === "recent") return r.recent.value;
+    if (key === "changeActual") return r.previous ? r.recent.value - r.previous.value : null;
+    if (key === "changePct") return r.changePct;
     if (key === "normal") return r.meta ? r.meta.normal : null;
-    if (key === "vsNormal") return r.normalPct;
-    return r.byDate[key] !== undefined ? r.byDate[key] : null; // a date column
+    if (key === "vsNormalActual") return r.meta ? r.recent.value - r.meta.normal : null;
+    if (key === "vsNormalPct") return r.normalPct;
+    return null;
   }
 
   const displayRows = useMemo(() => {
@@ -2274,11 +2278,7 @@ function BloodsSummaryTable({ bloodsEntries }) {
   return (
     <div>
       <div style={{ fontSize: 11.5, color: T.inkSoft, marginBottom: 12, lineHeight: 1.5 }}>
-        Each date a result was recorded is shown across the top. "Change" compares the most recent result with the
-        one before it; "vs normal" compares it with the typical normal value. Green means the most recent result
-        moved closer to normal, red means it moved further away. A whole row is highlighted when that move away
-        from normal is more than 20% — a prompt to take a closer look, not a clinical judgement. Tap a column
-        heading to sort by it, or tap a type's name to pop open its trend chart.
+        Comparison of the latest 2 results. Click a measure to view a graph of recorded results.
       </div>
       <div style={{ marginBottom: 14, maxWidth: 260 }}>
         <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Filter by type</div>
@@ -2288,23 +2288,27 @@ function BloodsSummaryTable({ bloodsEntries }) {
         </select>
       </div>
       <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12 }}>
-        <table style={{ borderCollapse: "collapse", fontSize: 12.5, tableLayout: "fixed" }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed", minWidth: 0, width: "100%" }}>
           <thead>
             <tr style={{ background: T.paper, textAlign: "left" }}>
               <SortableTh label="Type" sortKeyName="type" width={typeColWidth} sticky sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              {allDates.map(d => <SortableTh key={d} label={fmtShortDate(d)} sortKeyName={d} width={otherColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />)}
-              <SortableTh label="Change" sortKeyName="change" width={otherColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="Normal" sortKeyName="normal" width={otherColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortableTh label="vs normal" sortKeyName="vsNormal" width={otherColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Prev." sortKeyName="previous" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Recent" sortKeyName="recent" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Δ" sortKeyName="changeActual" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Δ%" sortKeyName="changePct" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Normal" sortKeyName="normal" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Δ norm" sortKeyName="vsNormalActual" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Δ% norm" sortKeyName="vsNormalPct" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
           <tbody>
             {displayRows.map(r => {
-              const { type, unit, byDate, recent, previous, meta, changePct, normalPct, movingCloser, rowFlagged } = r;
+              const { type, unit, recent, previous, meta, changePct, normalPct, movingCloser, rowFlagged } = r;
               const movementColor = movingCloser === true ? T.ok : movingCloser === false ? T.breach : T.ink;
               const rowStyle = rowFlagged
                 ? { borderTop: `1px solid ${T.lineSoft}`, background: T.warnBg, fontWeight: 700 }
                 : { borderTop: `1px solid ${T.lineSoft}` };
+              const numStyle = { ...tdStyle, fontFamily: T.mono, textAlign: "center", whiteSpace: "nowrap", padding: "9px 6px", width: numColWidth, minWidth: numColWidth, maxWidth: numColWidth };
 
               return (
                 <tr key={type} style={rowStyle}>
@@ -2322,17 +2326,20 @@ function BloodsSummaryTable({ bloodsEntries }) {
                       {type}{unit && <span style={{ color: T.inkSoft, fontWeight: 400 }}> ({unit})</span>}
                     </span>
                   </td>
-                  {allDates.map(d => (
-                    <td key={d} style={{ ...tdStyle, fontFamily: T.mono, textAlign: "center", width: otherColWidth, minWidth: otherColWidth, maxWidth: otherColWidth }}>
-                      {byDate[d] !== undefined ? byDate[d] : "—"}
-                    </td>
-                  ))}
-                  <td style={{ ...tdStyle, fontFamily: T.mono, textAlign: "center", whiteSpace: "nowrap", width: otherColWidth, minWidth: otherColWidth, maxWidth: otherColWidth, color: movementColor, fontWeight: rowFlagged ? 700 : 400 }}>
-                    {previous ? fmtDelta(recent.value - previous.value, changePct) : "—"}
+                  <td style={numStyle}>{previous ? previous.value : "—"}</td>
+                  <td style={numStyle}>{recent.value}</td>
+                  <td style={{ ...numStyle, color: movementColor, fontWeight: rowFlagged ? 700 : 400 }}>
+                    {previous ? fmtActual(recent.value - previous.value) : "—"}
                   </td>
-                  <td style={{ ...tdStyle, fontFamily: T.mono, textAlign: "center", width: otherColWidth, minWidth: otherColWidth, maxWidth: otherColWidth }}>{meta ? meta.normal : "—"}</td>
-                  <td style={{ ...tdStyle, fontFamily: T.mono, textAlign: "center", whiteSpace: "nowrap", width: otherColWidth, minWidth: otherColWidth, maxWidth: otherColWidth, color: movementColor, fontWeight: rowFlagged ? 700 : 400 }}>
-                    {meta ? fmtDelta(recent.value - meta.normal, normalPct) : "—"}
+                  <td style={{ ...numStyle, color: movementColor, fontWeight: rowFlagged ? 700 : 400 }}>
+                    {previous ? fmtPct(changePct) : "—"}
+                  </td>
+                  <td style={numStyle}>{meta ? meta.normal : "—"}</td>
+                  <td style={{ ...numStyle, color: movementColor, fontWeight: rowFlagged ? 700 : 400 }}>
+                    {meta ? fmtActual(recent.value - meta.normal) : "—"}
+                  </td>
+                  <td style={{ ...numStyle, color: movementColor, fontWeight: rowFlagged ? 700 : 400 }}>
+                    {meta ? fmtPct(normalPct) : "—"}
                   </td>
                 </tr>
               );
@@ -2611,12 +2618,6 @@ function MeasurementsSummaryTable({ entries }) {
     });
   }, [grouped]);
 
-  const allDates = useMemo(() => {
-    const s = new Set();
-    Object.values(grouped).forEach(arr => arr.forEach(r => s.add(r.date)));
-    return Array.from(s).sort((a, b) => a.localeCompare(b));
-  }, [grouped]);
-
   const [filterType, setFilterType] = useState("");
   const [sortKey, setSortKey] = useState("type");
   const [sortDir, setSortDir] = useState("asc");
@@ -2625,26 +2626,30 @@ function MeasurementsSummaryTable({ entries }) {
     if (!oldV) return null;
     return ((newV - oldV) / Math.abs(oldV)) * 100;
   }
-  function fmtDelta(diff, pct) {
-    const diffStr = diff < 0 ? `(${Math.abs(diff).toFixed(1)})` : diff.toFixed(1);
-    // pctChange() returns null when the previous/normal value was exactly 0
-    // (a % change from zero is mathematically undefined) — show just the
-    // plain difference in that case rather than crashing on pct.toFixed().
-    if (pct === null || pct === undefined || !isFinite(pct)) return diffStr;
-    const pctStr = pct < 0 ? `(${Math.abs(pct).toFixed(0)}%)` : `${pct.toFixed(0)}%`;
-    return `${diffStr} ${pctStr}`;
+  // Accounting-style formatting: negatives in brackets, positives shown plain
+  // (no + sign needed — the green colour already signals a positive move).
+  function fmtActual(diff) {
+    return diff < 0 ? `(${Math.abs(diff).toFixed(1)})` : diff.toFixed(1);
+  }
+  function fmtPct(pct) {
+    // pctChange() returns null when the previous value was exactly 0 (a %
+    // change from zero is mathematically undefined).
+    if (pct === null || pct === undefined || !isFinite(pct)) return "—";
+    return pct < 0 ? `(${Math.abs(pct).toFixed(0)}%)` : `${pct.toFixed(0)}%`;
   }
 
   const rowData = useMemo(() => types.map(type => {
     const rows = grouped[type];
-    const byDate = Object.fromEntries(rows.map(r => [r.date, r.value]));
     const recent = rows[rows.length - 1];
     const previous = rows.length > 1 ? rows[rows.length - 2] : null;
     const changePct = previous ? pctChange(recent.value, previous.value) : null;
     const unit = recent.unit;
-    return { type, unit, byDate, recent, previous, changePct };
+    return { type, unit, recent, previous, changePct };
   }), [types, grouped]);
 
+  // "Type" gets a width that fits the longest label here; every other column
+  // is a single short number, so they can all share one narrow width —
+  // keeping as much of the table on-screen at once as possible on a phone.
   const typeColWidth = useMemo(() => {
     let chars = 4;
     rowData.forEach(r => {
@@ -2653,12 +2658,15 @@ function MeasurementsSummaryTable({ entries }) {
     });
     return `${chars + 2}ch`;
   }, [rowData]);
-  const otherColWidth = "100px";
+  const numColWidth = "52px";
 
   function getSortValue(r, key) {
     if (key === "type") return r.type;
-    if (key === "change") return r.changePct;
-    return r.byDate[key] !== undefined ? r.byDate[key] : null;
+    if (key === "previous") return r.previous ? r.previous.value : null;
+    if (key === "recent") return r.recent.value;
+    if (key === "changeActual") return r.previous ? r.recent.value - r.previous.value : null;
+    if (key === "changePct") return r.changePct;
+    return null;
   }
 
   const displayRows = useMemo(() => {
@@ -2696,10 +2704,6 @@ function MeasurementsSummaryTable({ entries }) {
 
   return (
     <div>
-      <div style={{ fontSize: 11.5, color: T.inkSoft, marginBottom: 12, lineHeight: 1.5 }}>
-        Each date a measurement was recorded is shown across the top. "Change" compares the most recent
-        measurement of that scan type with the one before it. Tap a column heading to sort by it.
-      </div>
       <div style={{ marginBottom: 14, maxWidth: 260 }}>
         <div style={{ fontSize: 10.5, color: T.inkSoft, marginBottom: 4 }}>Filter by type</div>
         <select className="tt-select" value={filterType} onChange={e => setFilterType(e.target.value)} style={inputStyle}>
@@ -2708,17 +2712,20 @@ function MeasurementsSummaryTable({ entries }) {
         </select>
       </div>
       <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, marginBottom: 20 }}>
-        <table style={{ borderCollapse: "collapse", fontSize: 12.5, tableLayout: "fixed" }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed", minWidth: 0, width: "100%" }}>
           <thead>
             <tr style={{ background: T.paper, textAlign: "left" }}>
               <SortableTh label="Type" sortKeyName="type" width={typeColWidth} sticky sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              {allDates.map(d => <SortableTh key={d} label={fmtShortDate(d)} sortKeyName={d} width={otherColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />)}
-              <SortableTh label="Change" sortKeyName="change" width={otherColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Prev." sortKeyName="previous" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Recent" sortKeyName="recent" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Δ" sortKeyName="changeActual" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortableTh label="Δ%" sortKeyName="changePct" width={numColWidth} sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
           <tbody>
             {displayRows.map(r => {
-              const { type, unit, byDate, recent, previous, changePct } = r;
+              const { type, unit, recent, previous } = r;
+              const numStyle = { ...tdStyle, fontFamily: T.mono, textAlign: "center", whiteSpace: "nowrap", padding: "9px 6px", width: numColWidth, minWidth: numColWidth, maxWidth: numColWidth };
               return (
                 <tr key={type} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
                   <td style={{
@@ -2728,14 +2735,10 @@ function MeasurementsSummaryTable({ entries }) {
                   }}>
                     {type}{unit && <span style={{ color: T.inkSoft, fontWeight: 400 }}> ({unit})</span>}
                   </td>
-                  {allDates.map(d => (
-                    <td key={d} style={{ ...tdStyle, fontFamily: T.mono, textAlign: "center", width: otherColWidth, minWidth: otherColWidth, maxWidth: otherColWidth }}>
-                      {byDate[d] !== undefined ? byDate[d] : "—"}
-                    </td>
-                  ))}
-                  <td style={{ ...tdStyle, fontFamily: T.mono, textAlign: "center", whiteSpace: "nowrap", width: otherColWidth, minWidth: otherColWidth, maxWidth: otherColWidth }}>
-                    {previous ? fmtDelta(recent.value - previous.value, changePct) : "—"}
-                  </td>
+                  <td style={numStyle}>{previous ? previous.value : "—"}</td>
+                  <td style={numStyle}>{recent.value}</td>
+                  <td style={numStyle}>{previous ? fmtActual(recent.value - previous.value) : "—"}</td>
+                  <td style={numStyle}>{previous ? fmtPct(r.changePct) : "—"}</td>
                 </tr>
               );
             })}
@@ -3059,6 +3062,7 @@ function EditAppointmentModal({ a, onClose, onSave, onDelete, canEdit = true }) 
 
 // ================= SUPPORT MESSAGES TAB =================
 function SupportMessagesTab({ messages, onAdd, onDelete, canDelete }) {
+  const [sub, setSub] = useState("received");
   const [name, setName] = useState("");
   const [date, setDate] = useState(todayStr());
   const [text, setText] = useState("");
@@ -3071,6 +3075,7 @@ function SupportMessagesTab({ messages, onAdd, onDelete, canDelete }) {
     try {
       await onAdd({ name: name.trim(), date, message: text.trim() });
       setText(""); setName(""); setDate(todayStr());
+      setSub("received");
     } finally {
       setSaving(false);
     }
@@ -3084,65 +3089,87 @@ function SupportMessagesTab({ messages, onAdd, onDelete, canDelete }) {
 
   return (
     <div>
-      <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16, marginBottom: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}>
-          <Heart size={15} fill="#C9857E" color="#C9857E" /> Add a message of support
-        </div>
-        <div className="tt-2col">
-          <Field label="From"><input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Grandma" style={inputStyle} /></Field>
-          <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} /></Field>
-        </div>
-        <Field label="Message"><textarea value={text} onChange={e => setText(e.target.value)} rows={3} placeholder="Write a message of support…" style={{ ...inputStyle, resize: "vertical" }} /></Field>
-        <button className="tt-btn" onClick={addMessage} disabled={saving} style={{ background: T.accent, color: "#fff", borderRadius: 9, padding: "10px 18px", fontSize: 13, fontWeight: 600 }}>
-          {saving ? "Adding…" : "Add message"}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
+        <button className="tt-btn" onClick={() => setSub("received")} style={{
+          background: sub === "received" ? T.navy : T.card, color: sub === "received" ? "#fff" : T.ink,
+          border: `1px solid ${sub === "received" ? T.navy : T.line}`, borderRadius: 20, padding: "8px 16px",
+          fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <Heart size={13} fill={sub === "received" ? "#fff" : "#C9857E"} color={sub === "received" ? "#fff" : "#C9857E"} />
+          Messages Received{sorted.length > 0 ? ` (${sorted.length})` : ""}
+        </button>
+        <button className="tt-btn" onClick={() => setSub("add")} style={{
+          background: sub === "add" ? T.navy : T.card, color: sub === "add" ? "#fff" : T.ink,
+          border: `1px solid ${sub === "add" ? T.navy : T.line}`, borderRadius: 20, padding: "8px 16px",
+          fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <Plus size={13} /> Add Message
         </button>
       </div>
 
-      {sorted.length === 0 ? (
-        <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>
-          No messages yet — the first one you add will show up here.
+      {sub === "add" && (
+        <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}>
+            <Heart size={15} fill="#C9857E" color="#C9857E" /> Add a message of support
+          </div>
+          <div className="tt-2col">
+            <Field label="From"><input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Grandma" style={inputStyle} /></Field>
+            <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} style={inputStyle} /></Field>
+          </div>
+          <Field label="Message"><textarea value={text} onChange={e => setText(e.target.value)} rows={3} placeholder="Write a message of support…" style={{ ...inputStyle, resize: "vertical" }} /></Field>
+          <button className="tt-btn" onClick={addMessage} disabled={saving} style={{ background: T.accent, color: "#fff", borderRadius: 9, padding: "10px 18px", fontSize: 13, fontWeight: 600 }}>
+            {saving ? "Adding…" : "Add message"}
+          </button>
         </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {sorted.map(m => {
-            const expanded = expandedId === m.id;
-            const summary = m.message.length > 70 ? `${m.message.slice(0, 70).trim()}…` : m.message;
-            return (
-              <div key={m.id} style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, overflow: "hidden" }}>
-                <div
-                  onClick={() => setExpandedId(prev => (prev === m.id ? null : m.id))}
-                  style={{ padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}
-                >
-                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start", minWidth: 0 }}>
-                    <Heart size={15} fill="#C9857E" color="#C9857E" style={{ marginTop: 2, flexShrink: 0 }} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 12, color: T.inkSoft }}>
-                        <span style={{ fontFamily: T.mono }}>{fmtDate(m.date)}</span>
-                        {m.name && <> · <strong style={{ color: T.ink }}>{m.name}</strong></>}
-                      </div>
-                      {!expanded && (
-                        <div style={{ fontSize: 13.5, color: T.ink, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {summary}
+      )}
+
+      {sub === "received" && (
+        sorted.length === 0 ? (
+          <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 30, textAlign: "center", color: T.inkSoft, fontSize: 13 }}>
+            No messages yet — tap "Add Message" to add the first one.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {sorted.map(m => {
+              const expanded = expandedId === m.id;
+              const summary = m.message.length > 70 ? `${m.message.slice(0, 70).trim()}…` : m.message;
+              return (
+                <div key={m.id} style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, overflow: "hidden" }}>
+                  <div
+                    onClick={() => setExpandedId(prev => (prev === m.id ? null : m.id))}
+                    style={{ padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}
+                  >
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", minWidth: 0 }}>
+                      <Heart size={15} fill="#C9857E" color="#C9857E" style={{ marginTop: 2, flexShrink: 0 }} />
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 12, color: T.inkSoft }}>
+                          <span style={{ fontFamily: T.mono }}>{fmtDate(m.date)}</span>
+                          {m.name && <> · <strong style={{ color: T.ink }}>{m.name}</strong></>}
                         </div>
+                        {!expanded && (
+                          <div style={{ fontSize: 13.5, color: T.ink, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {summary}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {expanded ? <ChevronUp size={16} color={T.inkSoft} style={{ flexShrink: 0 }} /> : <ChevronDown size={16} color={T.inkSoft} style={{ flexShrink: 0 }} />}
+                  </div>
+                  {expanded && (
+                    <div style={{ padding: "0 14px 14px 39px" }}>
+                      <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{m.message}</div>
+                      {canDelete && (
+                        <button className="tt-btn" onClick={() => deleteMessage(m.id)} style={{ marginTop: 10, background: "transparent", color: T.breach, fontSize: 11.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 5, padding: "4px 0" }}>
+                          <Trash2 size={12} /> Delete
+                        </button>
                       )}
                     </div>
-                  </div>
-                  {expanded ? <ChevronUp size={16} color={T.inkSoft} style={{ flexShrink: 0 }} /> : <ChevronDown size={16} color={T.inkSoft} style={{ flexShrink: 0 }} />}
+                  )}
                 </div>
-                {expanded && (
-                  <div style={{ padding: "0 14px 14px 39px" }}>
-                    <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{m.message}</div>
-                    {canDelete && (
-                      <button className="tt-btn" onClick={() => deleteMessage(m.id)} style={{ marginTop: 10, background: "transparent", color: T.breach, fontSize: 11.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 5, padding: "4px 0" }}>
-                        <Trash2 size={12} /> Delete
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )
       )}
     </div>
   );
@@ -3180,7 +3207,7 @@ function GuidanceTab() {
       </GuidanceSection>
 
       <GuidanceSection title="User roles">
-        <RoleRow name="Owner" accentColor={T.navy}>
+        <RoleRow name="Owner" accentColor={T.accentDeep}>
           Full access to everything, and the only one who manages invites and the household itself. The original
           creator — can't be removed.
         </RoleRow>
@@ -3239,9 +3266,9 @@ function GuidanceTab() {
               <li>Save — it's added to that element's history.</li>
             </ol>
             <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6 }}>
-              The Summary tab lays out every result in a table — one row per element, one column per test date —
-              with the change since the last result and the change against the normal range worked out
-              automatically, and anything moving by more than 20% highlighted. Tap a column heading to sort by it.
+              The Summary tab lays out the two most recent results for each element, with the change since the
+              last result and the change against the normal range each split into the actual amount and the
+              percentage, and anything moving by more than 20% highlighted. Tap a column heading to sort by it.
               Tap a type's name to pop open its trend chart. Pick a type from the dropdown instead to filter the
               table down to just that row, with its chart shown underneath.
             </div>
@@ -3255,11 +3282,10 @@ function GuidanceTab() {
               <li>Save — it's added to that scan type's history.</li>
             </ol>
             <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6 }}>
-              The Summary tab lays out every measurement in a table — one row per scan type, one column per date —
-              with the change since the last measurement of that type worked out automatically. Tap a column
-              heading to sort by it, or use the dropdown to filter the table to one type. A chart underneath
-              always shows every measurement plotted on a single line in date order, each point labelled with its
-              scan type.
+              The Summary tab lays out the two most recent measurements for each scan type, with the change
+              between them split into the actual amount and the percentage. Tap a column heading to sort by it,
+              or use the dropdown to filter the table to one type. A chart underneath always shows every
+              measurement plotted on a single line in date order, each point labelled with its scan type.
             </div>
           </div>
 
@@ -3311,8 +3337,9 @@ function GuidanceTab() {
           </div>
 
           <div>
-            <strong>Support Messages</strong> — anyone, including viewers, can add a message here. Only an owner,
-            admin, or editor can delete one.
+            <strong>Support Messages</strong> has two tabs: "Messages Received" to read through what's been sent,
+            and "Add Message" to write one. Anyone, including viewers, can add a message. Only an owner, admin, or
+            editor can delete one.
           </div>
           <div>
             <strong>Settings</strong> is now organised into sub-tabs:
@@ -3367,9 +3394,8 @@ function PrescriptionsTab({ prescriptions, setPrescriptions, treatments, canEdit
   return (
     <div>
       <div style={{ fontSize: 11.5, color: T.inkSoft, marginBottom: 14, lineHeight: 1.5 }}>
-        Track supportive medications like Filgrastim or steroids, linked to a specific treatment if you like, with
-        the day-by-day schedule worked out automatically. This is a planning aid, not a substitute for the
-        instructions given by your care team — always follow their guidance on dose and timing.
+        This is a planning aid, not a substitute for the instructions given by your care team — always follow
+        their guidance on dose and timing.
       </div>
 
       {canEdit && (
