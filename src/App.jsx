@@ -2335,7 +2335,7 @@ function BloodsSummaryTable({ bloodsEntries }) {
           </div>
         </div>
       </div>
-      <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12 }}>
+      <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, maxHeight: "60vh", overflowY: "auto" }}>
         <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: 12, tableLayout: "fixed", minWidth: 0, width: "100%" }}>
           <thead>
             <tr style={{ background: T.paper, textAlign: "left" }}>
@@ -2749,7 +2749,7 @@ function MeasurementsSummaryTable({ entries }) {
           {types.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
-      <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, marginBottom: 20 }}>
+      <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, marginBottom: 20, maxHeight: "60vh", overflowY: "auto" }}>
         <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: 12, tableLayout: "fixed", minWidth: 0, width: "100%" }}>
           <thead>
             <tr style={{ background: T.paper, textAlign: "left" }}>
