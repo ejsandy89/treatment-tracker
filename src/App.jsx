@@ -999,7 +999,7 @@ export default function App() {
   return (
     <div className="tt-app" style={{
       fontFamily: T.ui, background: T.paper, minHeight: 600, borderRadius: 16,
-      overflow: "hidden", border: `1px solid ${T.line}`, color: T.ink,
+      border: `1px solid ${T.line}`, color: T.ink,
     }}>
       <style>{getGlobalCss()}</style>
 
@@ -1272,7 +1272,7 @@ function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, synci
         : "";
 
   return (
-    <div className="tt-header" style={{ background: T.navy, borderBottom: `3px solid ${T.accentBright}`, color: "#fff" }}>
+    <div className="tt-header" style={{ background: T.navy, borderBottom: `3px solid ${T.accentBright}`, color: "#fff", borderTopLeftRadius: 16, borderTopRightRadius: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
           <Logo variant="dark" withWordmark={false} size={28} />
