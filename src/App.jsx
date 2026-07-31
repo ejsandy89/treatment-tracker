@@ -2336,7 +2336,7 @@ function BloodsSummaryTable({ bloodsEntries }) {
         </div>
       </div>
       <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12 }}>
-        <table style={{ borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed", minWidth: 0, width: "100%" }}>
+        <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: 12, tableLayout: "fixed", minWidth: 0, width: "100%" }}>
           <thead>
             <tr style={{ background: T.paper, textAlign: "left" }}>
               <SortableTh label="Type" sortKeyName="type" width={typeColWidth} sticky sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -2352,20 +2352,21 @@ function BloodsSummaryTable({ bloodsEntries }) {
               const comparisonPoint = compareMode === "previous" ? previous : (meta ? { value: meta.normal } : null);
               const comparisonPct = compareMode === "previous" ? changePct : normalPct;
               const movementColor = movingCloser === true ? T.ok : movingCloser === false ? T.breach : T.ink;
-              const rowStyle = rowFlagged
-                ? { borderTop: `1px solid ${T.lineSoft}`, background: T.warnBg, fontWeight: 700 }
-                : { borderTop: `1px solid ${T.lineSoft}` };
-              const numStyle = { ...tdStyle, fontFamily: T.mono, textAlign: "center", whiteSpace: "nowrap", padding: "9px 6px", width: numColWidth, minWidth: numColWidth, maxWidth: numColWidth };
+              const rowBg = rowFlagged ? T.warnBg : T.card;
+              // Border and background go on each cell, not the <tr> — with
+              // border-collapse:separate (needed for sticky headers to work
+              // reliably on Safari), a <tr> border/background isn't
+              // guaranteed to paint the same way in every browser.
+              const cellBase = { borderTop: `1px solid ${T.lineSoft}`, background: rowBg };
+              const numStyle = { ...tdStyle, ...cellBase, fontFamily: T.mono, textAlign: "center", whiteSpace: "nowrap", padding: "9px 6px", width: numColWidth, minWidth: numColWidth, maxWidth: numColWidth, cursor: "pointer" };
 
               return (
-                <tr key={type} style={rowStyle}>
+                <tr key={type} onClick={() => setModalChartType(type)} title="Click to view chart" style={{ cursor: "pointer" }}>
                   <td
-                    onClick={() => setModalChartType(type)}
-                    title="Click to view chart"
                     style={{
-                      ...tdStyle, fontWeight: rowFlagged ? 700 : 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                      ...tdStyle, ...cellBase, fontWeight: rowFlagged ? 700 : 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                       width: typeColWidth, minWidth: typeColWidth, maxWidth: typeColWidth, cursor: "pointer",
-                      position: "sticky", left: 0, background: rowFlagged ? T.warnBg : T.card, zIndex: 2,
+                      position: "sticky", left: 0, zIndex: 2,
                     }}
                   >
                     {BLOOD_SHORT_NAMES[type] || type}
@@ -2749,7 +2750,7 @@ function MeasurementsSummaryTable({ entries }) {
         </select>
       </div>
       <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, marginBottom: 20 }}>
-        <table style={{ borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed", minWidth: 0, width: "100%" }}>
+        <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: 12, tableLayout: "fixed", minWidth: 0, width: "100%" }}>
           <thead>
             <tr style={{ background: T.paper, textAlign: "left" }}>
               <SortableTh label="Type" sortKeyName="type" width={typeColWidth} sticky sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -2762,11 +2763,12 @@ function MeasurementsSummaryTable({ entries }) {
           <tbody>
             {displayRows.map(r => {
               const { type, unit, recent, previous } = r;
-              const numStyle = { ...tdStyle, fontFamily: T.mono, textAlign: "center", whiteSpace: "nowrap", padding: "9px 6px", width: numColWidth, minWidth: numColWidth, maxWidth: numColWidth };
+              const cellBase = { borderTop: `1px solid ${T.lineSoft}` };
+              const numStyle = { ...tdStyle, ...cellBase, fontFamily: T.mono, textAlign: "center", whiteSpace: "nowrap", padding: "9px 6px", width: numColWidth, minWidth: numColWidth, maxWidth: numColWidth };
               return (
-                <tr key={type} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
+                <tr key={type}>
                   <td style={{
-                    ...tdStyle, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                    ...tdStyle, ...cellBase, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                     width: typeColWidth, minWidth: typeColWidth, maxWidth: typeColWidth,
                     position: "sticky", left: 0, background: T.card, zIndex: 2,
                   }}>
@@ -3307,7 +3309,7 @@ function GuidanceTab() {
               (e.g. Hb, ALT) to keep it compact. Use "Compare to" to switch between comparing the most recent
               result with the previous one or with the typical normal value — the change is split into the actual
               amount and the percentage, and anything moving by more than 20% away from normal is highlighted. Tap
-              a column heading to sort by it. Tap a type's name to pop open its trend chart; pick a type from the
+              a column heading to sort by it. Tap anywhere on a row to pop open its trend chart; pick a type from the
               dropdown instead to filter the table down to just that row, with its chart shown underneath.
             </div>
           </div>
