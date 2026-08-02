@@ -141,25 +141,36 @@ export default async (req) => {
     const disabled = new Set((prefs || []).filter(p => p.reminders_enabled === false).map(p => p.user_id));
     const eligibleUserIds = memberIds.filter(id => !disabled.has(id));
 
-    if (eligibleUserIds.length > 0) {
-      const { data: subs } = await supabase.from("push_subscriptions").select("*").in("user_id", eligibleUserIds);
+    const subsPromise = eligibleUserIds.length > 0
+      ? supabase.from("push_subscriptions").select("*").in("user_id", eligibleUserIds)
+      : Promise.resolve({ data: [] });
+    const { data: subs } = await subsPromise;
 
-      for (const item of toRemind) {
-        let title, message;
-        if (item.kind === "prescription") {
-          title = `⏰ Time to take ${item.label}`;
-          message = `Scheduled for ${item.time} — ${household.name || "your tracker"}.`;
-        } else {
-          title = item.kind === "treatment" ? `⏰ Treatment tomorrow: ${item.label}` : `⏰ Appointment tomorrow: ${item.label}`;
-          const timeText = item.time ? ` at ${item.time}` : "";
-          message = `Coming up tomorrow${timeText} — ${household.name || "your tracker"}.`;
-        }
+    const logRows = [];
+    for (const item of toRemind) {
+      let title, message, url;
+      if (item.kind === "prescription") {
+        title = `⏰ Time to take ${item.label}`;
+        message = `Scheduled for ${item.time} — ${household.name || "your tracker"}.`;
+        url = "/?tab=prescriptions";
+      } else if (item.kind === "treatment") {
+        title = `⏰ Treatment tomorrow: ${item.label}`;
+        message = `Coming up tomorrow${item.time ? ` at ${item.time}` : ""} — ${household.name || "your tracker"}.`;
+        url = "/?tab=calendar";
+      } else {
+        title = `⏰ Appointment tomorrow: ${item.label}`;
+        message = `Coming up tomorrow${item.time ? ` at ${item.time}` : ""} — ${household.name || "your tracker"}.`;
+        url = "/?tab=appointments";
+      }
 
-        await Promise.all((subs || []).map(async (sub) => {
+      logRows.push({ household_id: household.id, title, body: message, url });
+
+      if (subs.length > 0) {
+        await Promise.all(subs.map(async (sub) => {
           try {
             await webpush.sendNotification(
               { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-              JSON.stringify({ title, body: message })
+              JSON.stringify({ title, body: message, url })
             );
           } catch (e) {
             if (e.statusCode === 404 || e.statusCode === 410) {
@@ -167,9 +178,14 @@ export default async (req) => {
             }
           }
         }));
-        remindersSent++;
       }
+      remindersSent++;
     }
+
+    // Log every reminder regardless of whether anyone was actually
+    // subscribed, so "what was that reminder about?" always has an answer
+    // inside the app, not just in the OS notification tray.
+    if (logRows.length > 0) await supabase.from("notification_log").insert(logRows);
 
     // Mark these as sent regardless of whether anyone was actually
     // subscribed, so we don't keep re-checking them every hour.

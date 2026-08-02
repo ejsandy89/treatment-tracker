@@ -237,3 +237,21 @@ create policy "user manages their own notification prefs" on notification_prefs
 -- bypasses RLS) ever touches this table — no direct client access.
 create policy "no direct client access to sent_reminders" on sent_reminders
   for all using (false) with check (false);
+
+-- A record of recent notifications sent to a household, so a missed/
+-- dismissed push notification can still be checked from within the app —
+-- only written server-side via the service-role key.
+create table if not exists notification_log (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references households(id) on delete cascade,
+  title text not null,
+  body text,
+  url text,
+  created_at timestamptz not null default now()
+);
+create index if not exists notification_log_household_idx on notification_log(household_id, created_at desc);
+
+alter table notification_log enable row level security;
+
+create policy "members can read their household's notification log" on notification_log
+  for select using (household_role(household_id) is not null);

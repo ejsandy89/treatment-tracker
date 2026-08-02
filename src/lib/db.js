@@ -251,18 +251,33 @@ export async function setNotificationPrefs(prefs) {
 // Best-effort request to push a notification to the rest of the household
 // (excluding whoever just made the change). Never throws — a notification
 // failing to send should never block the actual data save.
-export async function notifyHousehold({ title, body, category }) {
+export async function notifyHousehold({ title, body, category, url }) {
   if (!_householdId) return;
   try {
     const { data: userData } = await supabase.auth.getUser();
     await fetch("/.netlify/functions/send-notification", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ householdId: _householdId, excludeUserId: userData?.user?.id, title, body, category }),
+      body: JSON.stringify({ householdId: _householdId, excludeUserId: userData?.user?.id, title, body, category, url }),
     });
   } catch {
     // best-effort only — swallow errors
   }
+}
+
+// The last 20 notifications sent to this household, regardless of whether
+// this device was actually subscribed to push at the time — lets someone
+// check "what was that notification about?" from inside the app, which is
+// otherwise impossible once a push notification's been missed or dismissed.
+export async function listRecentNotifications() {
+  if (!_householdId) return [];
+  const { data, error } = await supabase
+    .from("notification_log")
+    .select("id, title, body, url, created_at")
+    .eq("household_id", _householdId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  return error ? [] : data;
 }
 
 // Sends a notification straight back to the current user's own device(s),

@@ -26,7 +26,7 @@ exports.handler = async (event) => {
   } catch {
     return { statusCode: 400, body: "Invalid JSON body" };
   }
-  const { householdId, excludeUserId, title, body: message, selfTest, userId, category } = body;
+  const { householdId, excludeUserId, title, body: message, url, selfTest, userId, category } = body;
 
   // Maps a notification's category to the specific preference column that
   // should gate it — each category defaults to on if never explicitly set.
@@ -52,7 +52,7 @@ exports.handler = async (event) => {
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-          JSON.stringify({ title: title || "🔔 Test notification", body: message || "If you can see this, notifications are working." })
+          JSON.stringify({ title: title || "🔔 Test notification", body: message || "If you can see this, notifications are working.", url: url || "/" })
         );
         sent++;
       } catch (e) {
@@ -65,6 +65,12 @@ exports.handler = async (event) => {
   }
 
   if (!householdId || !title) return { statusCode: 400, body: "Missing householdId or title" };
+
+  // Log this regardless of whether anyone ends up eligible/subscribed below —
+  // this is what lets someone check "what was that notification about?"
+  // from within the app later, even if they missed or dismissed the actual
+  // push notification (which most platforms don't let you get back).
+  await supabase.from("notification_log").insert({ household_id: householdId, title, body: message || "", url: url || "/" });
 
   // Only notify members who have this specific category of notification
   // turned on (defaulting to on if they've never set a preference).
@@ -94,7 +100,7 @@ exports.handler = async (event) => {
     try {
       await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-        JSON.stringify({ title, body: message || "" })
+        JSON.stringify({ title, body: message || "", url: url || "/" })
       );
       sent++;
     } catch (e) {

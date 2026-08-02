@@ -41,9 +41,15 @@ self.addEventListener("notificationclick", (event) => {
   const targetUrl = event.notification.data?.url || "/";
 
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (clientList) => {
       for (const client of clientList) {
         if (client.url.includes(self.location.origin) && "focus" in client) {
+          // The app may already be open on a different tab — navigate it to
+          // the relevant one before focusing, rather than just focusing
+          // whatever tab happens to already be showing.
+          if ("navigate" in client) {
+            try { await client.navigate(targetUrl); } catch { /* some browsers restrict this; falling through to focus is still fine */ }
+          }
           return client.focus();
         }
       }

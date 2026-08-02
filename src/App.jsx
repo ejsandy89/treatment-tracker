@@ -14,7 +14,7 @@ import {
   getMyMembership, createHousehold, redeemInvite, createInvite, listInvites, revokeInvite, listMembers,
   setActiveHousehold, listSupportMessages, addSupportMessage, deleteSupportMessage, subscribeToHousehold,
   getPushPermissionState, getExistingPushSubscription, subscribeToPush, unsubscribeFromPush,
-  getNotificationPrefs, setNotificationPrefs, notifyHousehold, sendTestNotification,
+  getNotificationPrefs, setNotificationPrefs, notifyHousehold, sendTestNotification, listRecentNotifications,
 } from "./lib/db.js";
 import { encryptPayload, decryptPayload } from "./lib/crypto.js";
 
@@ -710,6 +710,20 @@ export default function App() {
     if (token) setInviteToken(token);
   }, []);
 
+  // 1b. Pick up a ?tab=... URL parameter, once — this is how clicking a
+  // push notification lands on the relevant screen (see the "url" field
+  // sent alongside each notification) rather than just opening the app.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("tab");
+    if (tab && DEFAULT_TAB_ORDER.includes(tab)) {
+      setMainTab(tab);
+      params.delete("tab");
+      const cleanedSearch = params.toString();
+      window.history.replaceState({}, "", window.location.pathname + (cleanedSearch ? `?${cleanedSearch}` : ""));
+    }
+  }, []);
+
   // 2. Track the auth session.
   useEffect(() => {
     let subscription;
@@ -989,7 +1003,7 @@ export default function App() {
   async function handleAddSupportMessage(entry) {
     await addSupportMessage(entry);
     setSupportMessages(await listSupportMessages());
-    notifyHousehold({ title: "❤️ New message of support", body: entry.name ? `From ${entry.name}` : "Someone left a message for you", category: "support_message" });
+    notifyHousehold({ title: "❤️ New message of support", body: entry.name ? `From ${entry.name}` : "Someone left a message for you", category: "support_message", url: "/?tab=support" });
   }
   async function handleDeleteSupportMessage(id) {
     await deleteSupportMessage(id);
@@ -1686,7 +1700,7 @@ function CalendarTab({ treatments, setTreatments, view, setView, canEdit }) {
     setTreatments(prev => [...prev, { id: uid(), history: [], ...t }]);
     setFormOpen(false);
     const label = t.type === "Other" ? (t.typeCustom || "treatment") : t.type;
-    notifyHousehold({ title: "💉 New treatment added", body: `${label} on ${fmtDate(t.date)}`, category: "treatment_added" });
+    notifyHousehold({ title: "💉 New treatment added", body: `${label} on ${fmtDate(t.date)}`, category: "treatment_added", url: "/?tab=calendar" });
   }
   function updateTreatment(id, patch) {
     setTreatments(prev => {
@@ -1695,7 +1709,7 @@ function CalendarTab({ treatments, setTreatments, view, setView, canEdit }) {
       if (patch.status === "Completed" && before && before.status !== "Completed") {
         const after = next.find(t => t.id === id);
         const label = after.type === "Other" ? (after.typeCustom || "treatment") : after.type;
-        notifyHousehold({ title: "✅ Treatment completed", body: `${label} on ${fmtDate(after.date)}`, category: "treatment_completed" });
+        notifyHousehold({ title: "✅ Treatment completed", body: `${label} on ${fmtDate(after.date)}`, category: "treatment_completed", url: "/?tab=calendar" });
       }
       return next;
     });
@@ -2099,7 +2113,7 @@ function BloodsTab({ bloodsEntries, setBloodsEntries, canEdit = true }) {
 
   function addEntry(entry) {
     setBloodsEntries(prev => [...prev, { id: uid(), ...entry }]);
-    notifyHousehold({ title: "🩸 New blood result added", body: `${entry.description}: ${entry.score}${entry.unit ? ` ${entry.unit}` : ""}`, category: "result_added" });
+    notifyHousehold({ title: "🩸 New blood result added", body: `${entry.description}: ${entry.score}${entry.unit ? ` ${entry.unit}` : ""}`, category: "result_added", url: "/?tab=bloods" });
   }
   function deleteEntry(id) {
     setBloodsEntries(prev => prev.filter(e => e.id !== id));
@@ -2531,7 +2545,7 @@ function MeasurementsTab({ measurementsEntries, setMeasurementsEntries, canEdit 
 
   function addEntry(entry) {
     setMeasurementsEntries(prev => [...prev, { id: uid(), ...entry }]);
-    notifyHousehold({ title: "🩻 New measurement added", body: `${entry.description}: ${entry.score}${entry.unit ? ` ${entry.unit}` : ""}`, category: "result_added" });
+    notifyHousehold({ title: "🩻 New measurement added", body: `${entry.description}: ${entry.score}${entry.unit ? ` ${entry.unit}` : ""}`, category: "result_added", url: "/?tab=measurements" });
   }
   function deleteEntry(id) { setMeasurementsEntries(prev => prev.filter(e => e.id !== id)); }
 
@@ -2839,7 +2853,7 @@ function AppointmentsTab({ appointments, setAppointments, view, setView, canEdit
     const id = uid();
     setAppointments(prev => [...prev, { id, history: [], summary: [], ...a }]);
     setFormOpen(false);
-    notifyHousehold({ title: "📅 New appointment added", body: `${a.name || a.role || "Appointment"} on ${fmtDate(a.date)}`, category: "appointment_added" });
+    notifyHousehold({ title: "📅 New appointment added", body: `${a.name || a.role || "Appointment"} on ${fmtDate(a.date)}`, category: "appointment_added", url: "/?tab=appointments" });
     if (a.notes && a.notes.trim()) {
       const bullets = await summariseNotes(a.notes);
       setAppointments(prev => prev.map(x => (x.id === id ? { ...x, summary: bullets } : x)));
@@ -3985,7 +3999,12 @@ function SettingsTab({ patient, setPatient, exportBundle, onImportAll, canEdit, 
         <HouseholdSection householdId={householdId} householdName={householdName} canManageHousehold={canManageHousehold} />
       )}
 
-      {sub === "notifications" && <NotificationsSection />}
+      {sub === "notifications" && (
+        <>
+          <NotificationsSection />
+          <RecentNotificationsSection />
+        </>
+      )}
 
       {sub === "backup" && (
         canManageHousehold
@@ -4137,6 +4156,56 @@ function NotificationsSection() {
             <span style={{ fontSize: 12.5, color: T.ink }}>Reminders — 24 hours before an appointment/treatment, and prescription times</span>
             <input type="checkbox" checked={prefs.reminders_enabled} onChange={() => togglePref("reminders_enabled")} style={{ width: 18, height: 18, accentColor: T.accent, flexShrink: 0 }} />
           </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A missed or dismissed push notification is gone for good on most
+// platforms — there's no way to get it back from the OS. This shows the
+// last 20 notifications sent to the household from inside the app itself,
+// so "what was that about?" always has an answer.
+function RecentNotificationsSection() {
+  const [items, setItems] = useState(null); // null = loading
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setItems(await listRecentNotifications());
+      } catch {
+        setError("Couldn't load recent notifications.");
+        setItems([]);
+      }
+    })();
+  }, []);
+
+  function fmtWhen(iso) {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return `${fmtDate(d.toISOString().slice(0, 10))} · ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  }
+
+  return (
+    <div className="tt-settings-card" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 20, marginBottom: 20 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: T.accentDeep, marginBottom: 4 }}>Recent notifications</div>
+      <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 14, lineHeight: 1.5 }}>
+        The last 20 notifications sent to this household — useful if you missed or dismissed one and want to check
+        what it was about.
+      </div>
+      {error && <div style={{ fontSize: 12, color: T.breach }}>{error}</div>}
+      {items === null ? null : items.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: T.inkSoft, textAlign: "center", padding: "16px 0" }}>Nothing sent yet.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {items.map(n => (
+            <div key={n.id} style={{ borderTop: `1px solid ${T.lineSoft}`, paddingTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{n.title}</div>
+              {n.body && <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 2 }}>{n.body}</div>}
+              <div style={{ fontSize: 11, color: T.inkSoft, marginTop: 3 }}>{fmtWhen(n.created_at)}</div>
+            </div>
+          ))}
         </div>
       )}
     </div>
