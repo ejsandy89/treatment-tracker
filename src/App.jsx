@@ -1056,7 +1056,7 @@ export default function App() {
             background: T.warnBg, border: `1px solid ${T.warn}`, color: T.warnText,
             borderRadius: 10, padding: "10px 14px", fontSize: 12.5, marginBottom: 16, fontWeight: 600,
           }}>
-            <Phone size={14} style={{ flexShrink: 0 }} /> Oncology helpline: {patient.helpline} (tap to call)
+            📞 Oncology helpline: {patient.helpline} (tap to call)
           </a>
         )}
         {mainTab === "contents" && <ContentsTab onNavigate={goTo} possessive={possessive} />}
@@ -1221,19 +1221,19 @@ function CreateHouseholdScreen({ inviteError, onCreated }) {
 
 // ================= HEADER =================
 const TAB_META = {
-  contents: { icon: <Home size={15} />, label: "Contents" },
-  summary: { icon: <LayoutDashboard size={15} />, label: "Summary" },
-  calendar: { icon: <CalendarDays size={15} />, label: "Treatment Calendar" },
-  appointments: { icon: <Stethoscope size={15} />, label: "Appointments" },
-  bloods: { icon: <Droplet size={15} />, label: "Bloods" },
-  support: { icon: <Heart size={15} />, label: "Support Messages" },
-  measurements: { icon: <Ruler size={15} />, label: "Measurements" },
-  prescriptions: { icon: <Pill size={15} />, label: "Prescriptions" },
-  sideeffects: { icon: <AlertTriangle size={15} />, label: "Side Effects" },
-  nutrition: { icon: <Apple size={15} />, label: "Nutrition" },
-  insights: { icon: <Sparkles size={15} />, label: "Insights" },
-  guidance: { icon: <BookOpen size={15} />, label: "Guidance" },
-  settings: { icon: <SettingsIcon size={15} />, label: "Settings" },
+  contents: { icon: "🏠", label: "Contents" },
+  summary: { icon: "📊", label: "Summary" },
+  calendar: { icon: "📅", label: "Treatment Calendar" },
+  appointments: { icon: "🩺", label: "Appointments" },
+  bloods: { icon: "🩸", label: "Bloods" },
+  support: { icon: "❤️", label: "Support Messages" },
+  measurements: { icon: "🩻", label: "Measurements" },
+  prescriptions: { icon: "💊", label: "Prescriptions" },
+  sideeffects: { icon: "⚠️", label: "Side Effects" },
+  nutrition: { icon: "🍎", label: "Nutrition" },
+  insights: { icon: "💡", label: "Insights" },
+  guidance: { icon: "📖", label: "Guidance" },
+  settings: { icon: "⚙️", label: "Settings" },
 };
 const TAB_DESCRIPTIONS = {
   summary: "A dashboard of key stats and messages of support — next treatment/appointment, progress so far, and more. Drag cards to reorder them.",
@@ -1320,7 +1320,7 @@ function Header({ mainTab, setMainTab, treatments, possessive, lastSynced, synci
               background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,.18)",
               borderRadius: 10, padding: "8px 14px", fontSize: 12.5, display: "flex", alignItems: "center", gap: 8,
             }}>
-              <Clock3 size={14} />
+              🕒
               <span>Next: <strong>{next.type === "Other" ? next.typeCustom : next.type}</strong> · {fmtDate(next.date)}</span>
             </div>
           )}
@@ -1512,7 +1512,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
 
   const cardsMap = {
     next: {
-      icon: <CalendarClock size={16} />, label: "Next treatment", accent: T.accent,
+      icon: "📅", label: "Next treatment", accent: T.accent,
       nav: () => onNavigate("calendar", "month"),
       content: nextTreatment ? (
         <>
@@ -1527,7 +1527,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
       ) : <div style={{ fontSize: 13, color: T.inkSoft }}>No upcoming treatments scheduled</div>,
     },
     nextAppointment: {
-      icon: <Stethoscope size={16} />, label: "Next appointment", accent: T.info,
+      icon: "🩺", label: "Next appointment", accent: T.info,
       nav: () => onNavigate("appointments", "month"),
       content: nextAppointment ? (
         <>
@@ -1544,7 +1544,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
       ) : <div style={{ fontSize: 13, color: T.inkSoft }}>No upcoming appointments scheduled</div>,
     },
     completed: {
-      icon: <CalendarCheck2 size={16} />, label: "Completed to date", accent: T.ok,
+      icon: "✅", label: "Completed to date", accent: T.ok,
       nav: () => onNavigate("calendar", "summary"),
       content: !phase ? (
         <div style={{ fontSize: 13, color: T.inkSoft }}>No treatments logged yet</div>
@@ -1566,7 +1566,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
       ),
     },
     remaining: {
-      icon: <Layers size={16} />, label: "Remaining by type", accent: T.info,
+      icon: "🗂️", label: "Remaining by type", accent: T.info,
       nav: () => onNavigate("calendar", "summary"),
       content: Object.keys(remainingByType).length === 0
         ? <div style={{ fontSize: 13, color: T.inkSoft }}>Nothing remaining</div>
@@ -1587,7 +1587,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
         ),
     },
     phaseEnd: {
-      icon: <Clock3 size={16} />, label: phase ? `End of ${phase.currentType}` : "Current phase", accent: T.warn,
+      icon: "🕒", label: phase ? `End of ${phase.currentType}` : "Current phase", accent: T.warn,
       nav: () => onNavigate("calendar", "summary"),
       content: phase ? (
         <>
@@ -1597,7 +1597,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
       ) : <div style={{ fontSize: 13, color: T.inkSoft }}>No treatments logged yet</div>,
     },
     nextType: {
-      icon: <TrendingUp size={16} />, label: "Next new treatment type", accent: T.accentDeep,
+      icon: "📈", label: "Next new treatment type", accent: T.accentDeep,
       nav: () => onNavigate("calendar", "summary"),
       content: phase && phase.nextType ? (
         <>
@@ -1607,7 +1607,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
       ) : <div style={{ fontSize: 13, color: T.inkSoft }}>No further treatment type change scheduled</div>,
     },
     supportMessages: {
-      icon: <Heart size={16} />, label: "A message for you", accent: "#C9857E",
+      icon: "❤️", label: "A message for you", accent: "#C9857E",
       nav: () => onNavigate("support"),
       fullWidth: true,
       content: featuredMsg ? (
@@ -1650,7 +1650,7 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
           fontSize: 24, fontWeight: 800, color: T.accentDeep, marginBottom: 18, lineHeight: 1.3,
           display: "flex", alignItems: "center", gap: 10,
         }}>
-          <Heart size={22} fill="#C9857E" color="#C9857E" style={{ flexShrink: 0 }} />
+          <span style={{ fontSize: 22, flexShrink: 0 }}>❤️</span>
           {supportMessage}
         </div>
       )}
@@ -2497,7 +2497,7 @@ function BloodsInlineChart({ bloodsEntries, type }) {
   return (
     <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16, marginTop: 16 }}>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}>
-        <TrendingUp size={15} /> Trend — {type}
+        📈 Trend — {type}
       </div>
       <BloodsTrendChartBody bloodsEntries={bloodsEntries} type={type} />
     </div>
@@ -2845,7 +2845,7 @@ function MeasurementsSummaryTable({ entries }) {
 
       <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}>
-          <TrendingUp size={15} /> Trend over time — all scan types
+          📈 Trend over time — all scan types
         </div>
         <ResponsiveContainer width="100%" height={280}>
           <LineChart data={combinedChartData} margin={{ top: 24, right: 20, left: 0, bottom: 5 }}>
@@ -2934,7 +2934,7 @@ function AppointmentsTab({ appointments, setAppointments, view, setView, canEdit
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div style={{ display: "flex", background: T.lineSoft, borderRadius: 9, padding: 3 }}>
-            <ViewToggleBtn active={view === "summary"} onClick={() => setView("summary")} icon={<NotebookText size={13} />} label="Summary" />
+            <ViewToggleBtn active={view === "summary"} onClick={() => setView("summary")} icon="📝" label="Summary" />
             <ViewToggleBtn active={view === "month"} onClick={() => setView("month")} icon={<Grid3x3 size={13} />} label="Calendar" />
           </div>
           {canEdit && (
@@ -3207,7 +3207,7 @@ function SupportMessagesTab({ messages, onAdd, onDelete, canDelete }) {
       {sub === "add" && (
         <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: T.accentDeep, display: "flex", alignItems: "center", gap: 6 }}>
-            <Heart size={15} fill="#C9857E" color="#C9857E" /> Add a message of support
+            ❤️ Add a message of support
           </div>
           <div className="tt-2col">
             <Field label="From"><input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Grandma" style={inputStyle} /></Field>
@@ -3237,7 +3237,7 @@ function SupportMessagesTab({ messages, onAdd, onDelete, canDelete }) {
                     style={{ padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}
                   >
                     <div style={{ display: "flex", gap: 10, alignItems: "flex-start", minWidth: 0 }}>
-                      <Heart size={15} fill="#C9857E" color="#C9857E" style={{ marginTop: 2, flexShrink: 0 }} />
+                      <span style={{ fontSize: 15, marginTop: 2, flexShrink: 0 }}>❤️</span>
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontSize: 12, color: T.inkSoft }}>
                           <span style={{ fontFamily: T.mono }}>{fmtDate(m.date)}</span>
@@ -3519,7 +3519,7 @@ function PrescriptionsTab({ prescriptions, setPrescriptions, treatments, canEdit
                 <div onClick={() => setExpandedId(prev => (prev === rx.id ? null : rx.id))} style={{ padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <Pill size={14} style={{ color: T.accent, flexShrink: 0 }} />
+                      <span style={{ fontSize: 14, flexShrink: 0 }}>💊</span>
                       <strong style={{ fontSize: 13.5, color: T.ink }}>{rx.name}</strong>
                     </div>
                     <div style={{ fontSize: 12, color: T.inkSoft, marginTop: 4 }}>{rxSummaryLine(rx)}</div>
@@ -3715,7 +3715,7 @@ function SideEffectsTab({ treatments, prescriptions, helpline }) {
           {groups.map((g, i) => (
             <div key={i} style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <AlertTriangle size={15} style={{ color: T.warn, flexShrink: 0 }} />
+                <span style={{ fontSize: 15, flexShrink: 0 }}>⚠️</span>
                 <strong style={{ fontSize: 13.5, color: T.ink }}>{g.source}</strong>
                 <span style={{ fontSize: 11, color: T.inkSoft }}>({g.sourceNote})</span>
               </div>
@@ -3899,7 +3899,7 @@ function InsightsTab({ treatments, prescriptions, bloodsEntries, findings, setFi
         background: T.accent, color: "#fff", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600,
         display: "flex", alignItems: "center", gap: 6, marginBottom: 18,
       }}>
-        <Sparkles size={15} /> {scanning ? "Scanning…" : findings === null ? "Find patterns" : "Refresh patterns"}
+        ✨ {scanning ? "Scanning…" : findings === null ? "Find patterns" : "Refresh patterns"}
       </button>
 
       {findings === null && (
@@ -3924,8 +3924,8 @@ function InsightsTab({ treatments, prescriptions, bloodsEntries, findings, setFi
               <div key={i} style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 14 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, color: T.ink }}>
                   {f.direction === "up"
-                    ? <ArrowUp size={15} color={T.warn} style={{ flexShrink: 0 }} />
-                    : <ArrowDown size={15} color={T.info} style={{ flexShrink: 0 }} />}
+                    ? <span style={{ fontSize: 15, flexShrink: 0 }}>📈</span>
+                    : <span style={{ fontSize: 15, flexShrink: 0 }}>📉</span>}
                   <span><strong>{f.element}</strong> tends to go {f.direction} after <strong>{f.trigger}</strong></span>
                 </div>
                 <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 6 }}>
@@ -3941,13 +3941,13 @@ function InsightsTab({ treatments, prescriptions, bloodsEntries, findings, setFi
             background: T.navy, color: "#fff", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600,
             display: "flex", alignItems: "center", gap: 6,
           }}>
-            <Sparkles size={14} /> {loadingAi ? "Thinking…" : "Ask AI to explain these patterns"}
+            ✨ {loadingAi ? "Thinking…" : "Ask AI to explain these patterns"}
           </button>
 
           {aiSummary && (
             <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16, marginTop: 14 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: T.accentDeep, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-                <Sparkles size={14} /> AI summary
+                ✨ AI summary
               </div>
               <div style={{ fontSize: 13, color: T.ink, lineHeight: 1.6 }}>{aiSummary}</div>
             </div>
@@ -3969,11 +3969,11 @@ function SettingsTab({ patient, setPatient, exportBundle, onImportAll, canEdit, 
   function handleSave() { setPatient(form); setSaved(true); setTimeout(() => setSaved(false), 1800); }
 
   const subTabs = [
-    { id: "patient", label: "Patient Data", icon: <User size={13} /> },
-    { id: "appearance", label: "Appearance", icon: <Sun size={13} /> },
-    { id: "household", label: "Household & Invites", icon: <Layers size={13} /> },
-    { id: "notifications", label: "Notifications", icon: <Sparkles size={13} /> },
-    { id: "backup", label: "Backup & Sharing", icon: <NotebookText size={13} /> },
+    { id: "patient", label: "Patient Data", icon: "👤" },
+    { id: "appearance", label: "Appearance", icon: "☀️" },
+    { id: "household", label: "Household & Invites", icon: "🗂️" },
+    { id: "notifications", label: "Notifications", icon: "✨" },
+    { id: "backup", label: "Backup & Sharing", icon: "📝" },
   ];
 
   return (
@@ -4001,11 +4001,11 @@ function SettingsTab({ patient, setPatient, exportBundle, onImportAll, canEdit, 
             <button className="tt-btn" onClick={() => setThemeMode("light")} style={{
               display: "flex", alignItems: "center", gap: 6, borderRadius: 17, padding: "7px 16px", fontSize: 12.5, fontWeight: 600,
               background: themeMode === "light" ? T.card : "transparent", color: themeMode === "light" ? T.ink : T.inkSoft,
-            }}><Sun size={14} /> Light</button>
+            }}>☀️ Light</button>
             <button className="tt-btn" onClick={() => setThemeMode("dark")} style={{
               display: "flex", alignItems: "center", gap: 6, borderRadius: 17, padding: "7px 16px", fontSize: 12.5, fontWeight: 600,
               background: themeMode === "dark" ? T.card : "transparent", color: themeMode === "dark" ? T.ink : T.inkSoft,
-            }}><Moon size={14} /> Dark</button>
+            }}>🌙 Dark</button>
           </div>
         </div>
       )}
