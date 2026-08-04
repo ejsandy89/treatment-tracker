@@ -658,6 +658,12 @@ export default function App() {
     setThemeModeState(mode); // triggers the re-render that picks up the new values
   }
 
+  // ----- Insights results (kept here, not inside InsightsTab, so they don't
+  // vanish just from switching tabs and back — only re-running the scan
+  // clears them) -----
+  const [insightsFindings, setInsightsFindings] = useState(null);
+  const [insightsAiSummary, setInsightsAiSummary] = useState("");
+
   // ----- Auth & household -----
   const [authChecked, setAuthChecked] = useState(false);
   const [session, setSession] = useState(null);
@@ -1069,7 +1075,13 @@ export default function App() {
         {mainTab === "prescriptions" && <PrescriptionsTab prescriptions={prescriptions} setPrescriptions={setPrescriptions} treatments={treatments} canEdit={canEdit} />}
         {mainTab === "sideeffects" && <SideEffectsTab treatments={treatments} prescriptions={prescriptions} helpline={patient.helpline} />}
         {mainTab === "nutrition" && <NutritionTab />}
-        {mainTab === "insights" && <InsightsTab treatments={treatments} prescriptions={prescriptions} bloodsEntries={entries.Bloods || []} />}
+        {mainTab === "insights" && (
+          <InsightsTab
+            treatments={treatments} prescriptions={prescriptions} bloodsEntries={entries.Bloods || []}
+            findings={insightsFindings} setFindings={setInsightsFindings}
+            aiSummary={insightsAiSummary} setAiSummary={setInsightsAiSummary}
+          />
+        )}
         {mainTab === "guidance" && <GuidanceTab />}
         {mainTab === "settings" && (
           <SettingsTab
@@ -1444,22 +1456,10 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
     [appointments, today]
   );
 
-  // "Completed to date" = of everything due by today, how many were actually completed.
-  const dueToDate = useMemo(() => treatments.filter(t => t.date <= today), [treatments, today]);
-  const completedToDate = dueToDate.filter(t => t.status === "Completed").length;
-  const totalDueToDate = dueToDate.length;
-  const completedPct = totalDueToDate ? Math.round((completedToDate / totalDueToDate) * 100) : 0;
-
-  const remainingByType = useMemo(() => {
-    const m = {};
-    treatments.forEach(t => {
-      if (t.status === "Completed" || t.status === "Skipped") return;
-      const label = t.type === "Other" ? (t.typeCustom || "Other") : t.type;
-      m[label] = (m[label] || 0) + 1;
-    });
-    return m;
-  }, [treatments]);
-
+  // "Completed to date" = of the full planned schedule for whichever
+  // treatment type is currently active (see `phase` below), how many have
+  // been completed — skipped treatments are excluded entirely, from both
+  // the count and the total, rather than counting against progress.
   const phase = useMemo(() => {
     const active = sorted.filter(t => t.status !== "Skipped");
     if (active.length === 0) return null;
@@ -1487,6 +1487,28 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
     }
     return { currentType, endDate, nextType, nextDate };
   }, [sorted, today]);
+
+  const { completedToDate, totalDueToDate, completedPct } = useMemo(() => {
+    if (!phase) return { completedToDate: 0, totalDueToDate: 0, completedPct: 0 };
+    const ofCurrentType = treatments.filter(t => {
+      if (t.status === "Skipped") return false;
+      const label = t.type === "Other" ? (t.typeCustom || "Other") : t.type;
+      return label === phase.currentType;
+    });
+    const completed = ofCurrentType.filter(t => t.status === "Completed").length;
+    const total = ofCurrentType.length;
+    return { completedToDate: completed, totalDueToDate: total, completedPct: total ? Math.round((completed / total) * 100) : 0 };
+  }, [treatments, phase]);
+
+  const remainingByType = useMemo(() => {
+    const m = {};
+    treatments.forEach(t => {
+      if (t.status === "Completed" || t.status === "Skipped") return;
+      const label = t.type === "Other" ? (t.typeCustom || "Other") : t.type;
+      m[label] = (m[label] || 0) + 1;
+    });
+    return m;
+  }, [treatments]);
 
   const cardsMap = {
     next: {
@@ -1524,7 +1546,9 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
     completed: {
       icon: <CalendarCheck2 size={16} />, label: "Completed to date", accent: T.ok,
       nav: () => onNavigate("calendar", "summary"),
-      content: (
+      content: !phase ? (
+        <div style={{ fontSize: 13, color: T.inkSoft }}>No treatments logged yet</div>
+      ) : (
         <>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
             <div style={{ fontSize: 26, fontWeight: 700, color: T.ink }}>
@@ -1535,7 +1559,9 @@ function SummaryDashboardTab({ treatments, appointments, cardOrder, setCardOrder
           <div style={{ height: 6, background: T.lineSoft, borderRadius: 4, marginTop: 10, overflow: "hidden" }}>
             <div style={{ height: "100%", width: `${completedPct}%`, background: T.ok, borderRadius: 4 }} />
           </div>
-          <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 6 }}>completed of those scheduled to date</div>
+          <div style={{ fontSize: 11.5, color: T.inkSoft, marginTop: 6 }}>
+            of the full {phase.currentType} schedule (skipped treatments excluded)
+          </div>
         </>
       ),
     },
@@ -2231,6 +2257,7 @@ function BloodsSummaryTable({ bloodsEntries }) {
   const [filterType, setFilterType] = useState("");
   const [modalChartType, setModalChartType] = useState(null);
   const [compareMode, setCompareMode] = useState("previous"); // "previous" | "normal"
+  const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
   const [sortKey, setSortKey] = useState("type");
   const [sortDir, setSortDir] = useState("asc");
 
@@ -2298,7 +2325,8 @@ function BloodsSummaryTable({ bloodsEntries }) {
   }
 
   const displayRows = useMemo(() => {
-    const filtered = filterType ? rowData.filter(r => r.type === filterType) : rowData;
+    let filtered = filterType ? rowData.filter(r => r.type === filterType) : rowData;
+    if (showFlaggedOnly) filtered = filtered.filter(r => r.rowFlagged);
     return [...filtered].sort((a, b) => {
       const av = getSortValue(a, sortKey), bv = getSortValue(b, sortKey);
       if (sortKey === "type") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
@@ -2309,7 +2337,7 @@ function BloodsSummaryTable({ bloodsEntries }) {
       if (bMissing) return -1;
       return sortDir === "asc" ? av - bv : bv - av;
     });
-  }, [rowData, filterType, sortKey, sortDir, compareMode]);
+  }, [rowData, filterType, sortKey, sortDir, compareMode, showFlaggedOnly]);
 
   function handleSort(key) {
     if (sortKey === key) setSortDir(d => (d === "asc" ? "desc" : "asc"));
@@ -2348,6 +2376,10 @@ function BloodsSummaryTable({ bloodsEntries }) {
             }}>Normal</button>
           </div>
         </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer", alignSelf: "flex-end", paddingBottom: 9 }}>
+          <input type="checkbox" checked={showFlaggedOnly} onChange={e => setShowFlaggedOnly(e.target.checked)} style={{ width: 16, height: 16, accentColor: T.accent }} />
+          <span style={{ fontSize: 12.5, color: T.ink }}>Significant movers only (&gt;20% away from normal)</span>
+        </label>
       </div>
       <div className="tt-table-wrap" style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, maxHeight: "60vh", overflowY: "auto" }}>
         <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: 12, tableLayout: "fixed", minWidth: 0, width: "100%" }}>
@@ -2402,6 +2434,18 @@ function BloodsSummaryTable({ bloodsEntries }) {
 
       {filterType && <BloodsInlineChart bloodsEntries={bloodsEntries} type={filterType} />}
       {modalChartType && <BloodsChartModal bloodsEntries={bloodsEntries} type={modalChartType} onClose={() => setModalChartType(null)} />}
+
+      {showFlaggedOnly && (
+        displayRows.length === 0 ? (
+          <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 24, textAlign: "center", color: T.inkSoft, fontSize: 13, marginTop: 16 }}>
+            Nothing currently flagged as a significant mover.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 16 }}>
+            {displayRows.map(r => <BloodsInlineChart key={r.type} bloodsEntries={bloodsEntries} type={r.type} />)}
+          </div>
+        )
+      )}
     </div>
   );
 }
@@ -3324,7 +3368,9 @@ function GuidanceTab() {
               result with the previous one or with the typical normal value — the change is split into the actual
               amount and the percentage, and anything moving by more than 20% away from normal is highlighted. Tap
               a column heading to sort by it. Tap anywhere on a row to pop open its trend chart; pick a type from the
-              dropdown instead to filter the table down to just that row, with its chart shown underneath.
+              dropdown instead to filter the table down to just that row, with its chart shown underneath. Tick
+              "Significant movers only" to narrow the table down to just the highlighted rows, with a chart for
+              each shown below.
             </div>
           </div>
 
@@ -3818,10 +3864,8 @@ async function fetchAiPatternSummary(findings) {
   }
 }
 
-function InsightsTab({ treatments, prescriptions, bloodsEntries }) {
-  const [findings, setFindings] = useState(null); // null = not run yet
+function InsightsTab({ treatments, prescriptions, bloodsEntries, findings, setFindings, aiSummary, setAiSummary }) {
   const [scanning, setScanning] = useState(false);
-  const [aiSummary, setAiSummary] = useState("");
   const [loadingAi, setLoadingAi] = useState(false);
 
   function runScan() {
@@ -3855,7 +3899,7 @@ function InsightsTab({ treatments, prescriptions, bloodsEntries }) {
         background: T.accent, color: "#fff", borderRadius: 9, padding: "9px 16px", fontSize: 13, fontWeight: 600,
         display: "flex", alignItems: "center", gap: 6, marginBottom: 18,
       }}>
-        <Sparkles size={15} /> {scanning ? "Scanning…" : "Find patterns"}
+        <Sparkles size={15} /> {scanning ? "Scanning…" : findings === null ? "Find patterns" : "Refresh patterns"}
       </button>
 
       {findings === null && (
